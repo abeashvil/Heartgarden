@@ -1,0 +1,68 @@
+Flower Display Ideas
+1. Growth states
+Seedling → Bud → Blooming → Full bloom
+Visual progression tied to streak days (e.g., 0–3: seedling, 4–7: bud, 8–14: blooming, 15+: full bloom)
+Subtle animations: gentle sway, petals opening, sparkles on milestones
+2. Emotional states
+Happy: bright colors, slight bounce
+Needs care: slight droop, muted colors
+Thriving: vibrant colors, glow effect
+Based on completion status (both partners completed = happy)
+3. Display enhancements
+Soft shadow/glow behind the flower
+Particle effects (petals, sparkles) on milestones
+Subtle parallax on scroll/tilt
+Day/night cycle (time-based lighting)
+4. Interactive elements
+Tap to see care history
+Long press for flower details
+Swipe to see previous days’ states
+Flower Design Recommendations
+Art style
+Pixel art: consistent with current look, nostalgic, scalable
+Hand-drawn: warm, personal
+Minimalist vector: clean, modern
+Hybrid: pixel art base with subtle gradients/shadows
+Design system
+Color palette
+Each flower type has a distinct color scheme
+Seasonal themes (spring pastels, summer brights, autumn warm, winter cool)
+Unlockable rare variants (golden, rainbow, etc.)
+Flower variety
+Common: rose, daisy, tulip, sunflower, lavender
+Seasonal: cherry blossom, poinsettia, autumn maple
+Rare: lotus, orchid, peony
+Special: heart-shaped, star-shaped, custom couple flowers
+Progression design
+Start small and simple
+Add petals, leaves, and details as it grows
+Final form: full bloom with unique characteristics
+Each flower type has 4–5 growth stages
+Technical considerations
+Asset sizes: 200x200 base, @2x and @3x variants
+Format: PNG with transparency for pixel art, SVG for vector
+Animation: frame-based for pixel art, or programmatic for vector
+File naming: flower_[type]_[stage]_[state].png (e.g., flower_rose_blooming_happy.png)
+Design tools
+Pixel art: Aseprite, Piskel, or Procreate
+Vector: Figma, Adobe Illustrator
+Animation: Lottie (for vector), sprite sheets (for pixel)
+Implementation suggestions
+Flower model enhancement
+Add growthStage (seedling, bud, blooming, full)
+Add emotionalState (happy, needsCare, thriving)
+Add daysAlive to track growth
+Visual feedback
+Color overlay based on state
+Scale transform for growth stages
+Opacity/glow effects for emotional state
+Garden view
+Grid layout showing all collected flowers
+Each flower shows its current state
+Tap to see full details and care history
+Should I implement any of these? I can:
+Add growth stages to the Flower model
+Create a flower state system
+Add visual effects/animations
+Design the garden view layout
+Which direction do you want to prioritize?
