@@ -22,6 +22,10 @@ final class Flower {
     var careLevel: Double?  // Care difficulty (1.0 = easy, 2.0 = medium, 3.0 = hard) - affects depletion rate
     var lastCareDate: Date?  // Last time both users completed care
     
+    // Streak tracking (D-009)
+    var streakCount: Int?  // Number of consecutive days both users completed care
+    var lastStreakDate: Date?  // Last date that contributed to the streak
+    
     // Computed properties with defaults for backward compatibility
     var effectiveHealth: Double {
         return health ?? 100.0
@@ -44,7 +48,9 @@ final class Flower {
         health: Double? = 100.0,
         maxHealth: Double? = 100.0,
         careLevel: Double? = 1.0,
-        lastCareDate: Date? = nil
+        lastCareDate: Date? = nil,
+        streakCount: Int? = 0,
+        lastStreakDate: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -55,6 +61,13 @@ final class Flower {
         self.maxHealth = maxHealth
         self.careLevel = careLevel
         self.lastCareDate = lastCareDate
+        self.streakCount = streakCount
+        self.lastStreakDate = lastStreakDate
+    }
+    
+    // Computed property with default for backward compatibility
+    var effectiveStreakCount: Int {
+        return streakCount ?? 0
     }
     
     // Computed property to get health percentage

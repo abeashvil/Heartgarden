@@ -123,6 +123,79 @@ struct FlowerCareSheetView: View {
     
     @Environment(\.dismiss) private var dismiss
     
+    // Update streak after both users complete care
+    private func updateStreakAfterCompletion() {
+        // Recalculate streak by checking QuestionHistory entries
+        do {
+            // Fetch all QuestionHistory entries for this flower
+            let descriptor = FetchDescriptor<QuestionHistory>(
+                sortBy: [SortDescriptor(\.dateCompleted, order: .reverse)]
+            )
+            let allHistoryEntries = try modelContext.fetch(descriptor)
+            
+            // Filter for this flower's history entries
+            let flowerHistory = allHistoryEntries.filter { $0.flowerId == flower.id }
+            
+            guard !flowerHistory.isEmpty else {
+                // No completed days yet, streak is 0
+                flower.streakCount = 0
+                flower.lastStreakDate = nil
+                try modelContext.save()
+                return
+            }
+            
+            // Sort by date completed (most recent first)
+            let sortedHistory = flowerHistory.sorted { $0.dateCompleted > $1.dateCompleted }
+            
+            // Calculate streak by checking consecutive days
+            let calendar = Calendar.current
+            var currentStreak = 0
+            var lastCheckedDate: Date? = nil
+            
+            for entry in sortedHistory {
+                let entryDate = calendar.startOfDay(for: entry.dateCompleted)
+                
+                if let lastDate = lastCheckedDate {
+                    let daysBetween = calendar.dateComponents([.day], from: entryDate, to: lastDate).day ?? 0
+                    
+                    if daysBetween == 1 {
+                        // Consecutive day, increment streak
+                        currentStreak += 1
+                        lastCheckedDate = entryDate
+                    } else if daysBetween > 1 {
+                        // Gap found, streak is broken
+                        break
+                    }
+                } else {
+                    // First entry (most recent completed day)
+                    // Check if it's today or yesterday to start the streak
+                    let today = calendar.startOfDay(for: Date())
+                    let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
+                    
+                    if entryDate == today || entryDate == yesterday {
+                        // Can start/continue streak
+                        currentStreak = 1
+                        lastCheckedDate = entryDate
+                    } else {
+                        // Too old, streak is broken
+                        break
+                    }
+                }
+            }
+            
+            // Update flower's streak count
+            flower.streakCount = currentStreak
+            flower.lastStreakDate = lastCheckedDate
+            
+            // Save updated streak
+            try modelContext.save()
+            
+            print("✅ Streak updated: \(currentStreak) days")
+        } catch {
+            print("Error updating streak: \(error)")
+        }
+    }
+    
     // Check if both users have answered their current questions and move to history
     private func checkAndHandleCompletedQuestions() {
         let today = Calendar.current.startOfDay(for: Date())
@@ -180,6 +253,12 @@ struct FlowerCareSheetView: View {
                 try modelContext.save()
                 print("✅ Question pair archived to history: \(questionText)")
                 print("✅ Health replenished: \(flower.effectiveHealth)/\(flower.effectiveMaxHealth)")
+                
+                // Update streak count (F-005, D-009)
+                // Recalculate streak after both users complete care
+                Task { @MainActor in
+                    updateStreakAfterCompletion()
+                }
             } catch {
                 print("❌ Error archiving question: \(error)")
             }

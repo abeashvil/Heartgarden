@@ -59,6 +59,7 @@ struct ContentView: View {
     @State private var showThemeDropdown = false
     @State private var buttonFrame: CGRect = .zero
     @State private var selectedTab: TabSelection = .main  // Track current tab
+    @State private var showStreakDebug = false
     @Query(sort: [SortDescriptor(\QuestionHistory.dateCompleted, order: .reverse)]) private var allHistoryEntries: [QuestionHistory]
     @Query private var allCareEntries: [DailyCare]
     @Query private var allChatMessages: [ChatMessage]
@@ -196,11 +197,11 @@ struct ContentView: View {
                                 .background(transparentBoxBackground)
                                 .cornerRadius(10)
                                 
-                                // Streak Count (F-005 placeholder) - Same size as partner status box
+                                // Streak Count (F-005) - Same size as partner status box
                                 HStack(spacing: 8) {
                                     Image(systemName: "flame.fill")
                                         .foregroundColor(.orange)
-                                    Text("\(viewModel.streakCount) day streak")
+                                    Text("\(flower.effectiveStreakCount) day streak")
                                         .font(.subheadline)
                                         .foregroundColor(primaryTextColor)
                                 }
@@ -255,6 +256,14 @@ struct ContentView: View {
                             Text(currentUserId == "user1" ? "👤" : "👥")
                                 .font(.title3)
                         }
+                        // DEBUG: Streak testing button
+                        Button(action: {
+                            showStreakDebug.toggle()
+                        }) {
+                            Image(systemName: "flame.fill")
+                                .foregroundColor(.orange.opacity(0.7))
+                                .font(.caption)
+                        }
                         // DEBUG: Temporary button to clear all data for testing
                         Button(action: {
                             clearAllData()
@@ -296,6 +305,10 @@ struct ContentView: View {
             .sheet(isPresented: $showGarden) {
                 GardenView(selectedTheme: selectedTheme)
             }
+            .sheet(isPresented: $showStreakDebug) {
+                StreakDebugView(selectedTheme: selectedTheme, currentUserId: currentUserId)
+                    .environment(\.modelContext, modelContext)
+            }
             .overlay(
                 // Bottom tab bar
                 VStack {
@@ -318,9 +331,12 @@ struct ContentView: View {
             }
             viewModel.currentUserId = currentUserId
             viewModel.loadCurrentFlower()
-            // Update partner status when view appears
+                    // Update partner status and streak when view appears
             Task { @MainActor in
                 viewModel.updatePartnerStatus()
+                if let flower = viewModel.currentFlower {
+                    viewModel.calculateStreak(flower: flower)
+                }
             }
         }
         .onChange(of: currentUserId) { oldValue, newValue in
@@ -746,6 +762,286 @@ struct ContentView: View {
             .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: -2)
         )
         .ignoresSafeArea(edges: .bottom)
+    }
+}
+
+// Streak Debug View
+struct StreakDebugView: View {
+    let selectedTheme: AppTheme
+    let currentUserId: String
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    @Query private var allFlowers: [Flower]
+    @Query private var allHistoryEntries: [QuestionHistory]
+    @Query private var allCareEntries: [DailyCare]
+    
+    private var primaryTextColor: Color {
+        switch selectedTheme {
+        case .darkMode:
+            return Color.white
+        default:
+            return Color.primary
+        }
+    }
+    
+    private var currentFlower: Flower? {
+        allFlowers.first { $0.isCurrent }
+    }
+    
+    private var streakInfoSection: some View {
+        Group {
+            if let flower = currentFlower {
+                VStack(spacing: 12) {
+                    Text("Current Streak")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(primaryTextColor)
+                    
+                    Text("\(flower.effectiveStreakCount) days")
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                        .foregroundColor(.orange)
+                    
+                    if let lastStreakDate = flower.lastStreakDate {
+                        Text("Last streak date: \(lastStreakDate, style: .date)")
+                            .font(.caption)
+                            .foregroundColor(primaryTextColor.opacity(0.7))
+                    }
+                }
+                .padding()
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(selectedTheme == .darkMode ? Color.white.opacity(0.1) : Color.white.opacity(0.4))
+                )
+            }
+        }
+    }
+    
+    private var historyEntriesSection: some View {
+        Group {
+            if let flower = currentFlower {
+                historyEntriesList(flower: flower)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private func historyEntriesList(flower: Flower) -> some View {
+        let flowerHistory = getFlowerHistory(flower: flower)
+        
+        VStack(alignment: .leading, spacing: 12) {
+            Text("History Entries (\(flowerHistory.count))")
+                .font(.headline)
+                .foregroundColor(primaryTextColor)
+            
+            ForEach(Array(flowerHistory.enumerated()), id: \.element.id) { index, entry in
+                let previousEntry = index > 0 ? flowerHistory[index - 1] : nil
+                historyEntryRow(entry: entry, index: index, totalCount: flowerHistory.count, previousEntry: previousEntry)
+            }
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(selectedTheme == .darkMode ? Color.white.opacity(0.1) : Color.white.opacity(0.4))
+        )
+    }
+    
+    private func getFlowerHistory(flower: Flower) -> [QuestionHistory] {
+        return allHistoryEntries
+            .filter { $0.flowerId == flower.id }
+            .sorted { $0.dateCompleted > $1.dateCompleted }
+    }
+    
+    @ViewBuilder
+    private func historyEntryRow(entry: QuestionHistory, index: Int, totalCount: Int, previousEntry: QuestionHistory?) -> some View {
+        let daysBetween = calculateDaysBetween(entry: entry, previousEntry: previousEntry)
+        
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Day \(totalCount - index)")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(primaryTextColor)
+                Text(entry.dateCompleted, style: .date)
+                    .font(.caption)
+                    .foregroundColor(primaryTextColor.opacity(0.7))
+            }
+            Spacer()
+            if let days = daysBetween {
+                Text("\(days) day gap")
+                    .font(.caption)
+                    .foregroundColor(days == 1 ? .green : .red)
+            }
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(selectedTheme == .darkMode ? Color.white.opacity(0.05) : Color.white.opacity(0.2))
+        )
+    }
+    
+    private func calculateDaysBetween(entry: QuestionHistory, previousEntry: QuestionHistory?) -> Int? {
+        guard let previous = previousEntry else { return nil }
+        let calendar = Calendar.current
+        let entryDate = calendar.startOfDay(for: entry.dateCompleted)
+        let previousDate = calendar.startOfDay(for: previous.dateCompleted)
+        let components = calendar.dateComponents([.day], from: entryDate, to: previousDate)
+        return components.day
+    }
+    
+    private var debugContent: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                streakInfoSection
+                historyEntriesSection
+                testActionsSection
+            }
+            .padding()
+        }
+    }
+    
+    private var testActionsSection: some View {
+        VStack(spacing: 12) {
+            Text("Test Actions")
+                .font(.headline)
+                .foregroundColor(primaryTextColor)
+            
+            Button(action: {
+                createTestStreakData(days: 3)
+            }) {
+                Text("Create 3-Day Streak")
+                    .font(.subheadline)
+                    .foregroundColor(.white)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.green)
+                    .cornerRadius(10)
+            }
+            
+            Button(action: {
+                createTestStreakData(days: 5, withGap: true)
+            }) {
+                Text("Create Streak with Gap (Resets)")
+                    .font(.subheadline)
+                    .foregroundColor(.white)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.orange)
+                    .cornerRadius(10)
+            }
+            
+            Button(action: {
+                recalculateStreak()
+            }) {
+                Text("Recalculate Streak")
+                    .font(.subheadline)
+                    .foregroundColor(.white)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color.blue)
+                    .cornerRadius(10)
+            }
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(selectedTheme == .darkMode ? Color.white.opacity(0.1) : Color.white.opacity(0.4))
+        )
+    }
+    
+    var body: some View {
+        NavigationView {
+            ZStack {
+                selectedTheme.backgroundColor
+                    .ignoresSafeArea()
+                
+                debugContent
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(selectedTheme.backgroundColor, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Streak Debug")
+                        .foregroundColor(primaryTextColor)
+                        .font(.headline)
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .foregroundColor(primaryTextColor)
+                }
+            }
+        }
+    }
+    
+    // Create test streak data
+    private func createTestStreakData(days: Int, withGap: Bool = false) {
+        guard let flower = currentFlower else { return }
+        
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        
+        for i in 0..<days {
+            // If withGap, skip day 2 to create a gap
+            if withGap && i == 1 {
+                continue
+            }
+            
+            let date = calendar.date(byAdding: .day, value: -i, to: today)!
+            
+            // Create test care entries for both users
+            let user1Care = DailyCare(
+                flowerId: flower.id,
+                userId: "user1",
+                date: date,
+                answerText: "Test answer user1 day \(i + 1)",
+                isCompleted: true,
+                questionText: "Test question \(i + 1)"
+            )
+            
+            let user2Care = DailyCare(
+                flowerId: flower.id,
+                userId: "user2",
+                date: date,
+                answerText: "Test answer user2 day \(i + 1)",
+                isCompleted: true,
+                questionText: "Test question \(i + 1)"
+            )
+            
+            // Create history entry
+            let history = QuestionHistory(
+                flowerId: flower.id,
+                questionText: "Test question \(i + 1)",
+                dateCompleted: date,
+                user1CareId: user1Care.id,
+                user2CareId: user2Care.id
+            )
+            
+            modelContext.insert(user1Care)
+            modelContext.insert(user2Care)
+            modelContext.insert(history)
+        }
+        
+        do {
+            try modelContext.save()
+            print("✅ Created test streak data: \(days) days")
+            recalculateStreak()
+        } catch {
+            print("❌ Error creating test data: \(error)")
+        }
+    }
+    
+    // Recalculate streak
+    private func recalculateStreak() {
+        guard let flower = currentFlower else { return }
+        
+        Task { @MainActor in
+            let viewModel = FlowerViewModel(modelContext: modelContext)
+            viewModel.currentFlower = flower
+            viewModel.calculateStreak(flower: flower)
+        }
     }
 }
 
