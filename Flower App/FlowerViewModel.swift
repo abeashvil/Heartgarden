@@ -40,11 +40,55 @@ class FlowerViewModel: ObservableObject {
         // Try to load from SwiftData if context is available
         if let context = modelContext {
             do {
-                let descriptor = FetchDescriptor<Flower>(
+                // First, migrate existing flowers to have isActive and isOwned
+                let allFlowersDescriptor = FetchDescriptor<Flower>()
+                let allFlowers = try context.fetch(allFlowersDescriptor)
+                for flower in allFlowers {
+                    // Migrate: if isActive is nil, set based on isCurrent
+                    if flower.isActive == nil {
+                        flower.isActive = flower.isCurrent
+                        flower.isOwned = true  // Existing flowers are owned
+                        try context.save()
+                    }
+                }
+                
+                // Initialize default flowers if needed
+                initializeDefaultFlowers(context: context)
+                
+                // Update UserSettings to 3 slots if needed
+                let settingsDescriptor = FetchDescriptor<UserSettings>()
+                if let settings = try? context.fetch(settingsDescriptor).first {
+                    if settings.activeFlowerSlots == nil || settings.effectiveActiveFlowerSlots < 3 {
+                        settings.activeFlowerSlots = 3
+                        try context.save()
+                    }
+                } else {
+                    // Create settings with 3 slots
+                    let newSettings = UserSettings(activeFlowerSlots: 3)
+                    context.insert(newSettings)
+                    try context.save()
+                }
+                
+                // Load current flower (prefer isCurrent, but fallback to first active)
+                let currentDescriptor = FetchDescriptor<Flower>(
                     predicate: #Predicate<Flower> { $0.isCurrent == true },
                     sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
                 )
-                let flowers = try context.fetch(descriptor)
+                var flowers = try context.fetch(currentDescriptor)
+                
+                // If no current flower, try to find first active flower
+                if flowers.isEmpty {
+                    let activeDescriptor = FetchDescriptor<Flower>(
+                        predicate: #Predicate<Flower> { $0.isActive == true },
+                        sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+                    )
+                    flowers = try context.fetch(activeDescriptor)
+                    // Set first active flower as current
+                    if let firstActive = flowers.first {
+                        firstActive.isCurrent = true
+                        try context.save()
+                    }
+                }
                 
                 if let flower = flowers.first {
                     // Found current flower in database
@@ -56,21 +100,48 @@ class FlowerViewModel: ObservableObject {
                         flower.careLevel = 1.0
                         try context.save()
                     }
+                    // Migrate streak properties if needed
+                    if flower.streakCount == nil {
+                        flower.streakCount = 0
+                        try context.save()
+                    }
                     // Update health based on time since last care
                     self.updateFlowerHealth(flower: flower)
+                    // Calculate and update streak count
+                    self.calculateStreak(flower: flower)
                     // Update partner status after loading flower
                     self.updatePartnerStatus()
                     self.isLoading = false
                     return
                 } else {
                     // No current flower found, create a default one
+                    // First, ensure UserSettings exists with 3 active slots
+                    let settingsDescriptor = FetchDescriptor<UserSettings>()
+                    let existingSettings = try? context.fetch(settingsDescriptor)
+                    let settings = existingSettings?.first ?? UserSettings(activeFlowerSlots: 3)
+                    if existingSettings?.isEmpty ?? true {
+                        context.insert(settings)
+                    } else {
+                        // Update existing settings to 3 slots if it's still 1
+                        if settings.activeFlowerSlots == nil || settings.effectiveActiveFlowerSlots < 3 {
+                            settings.activeFlowerSlots = 3
+                        }
+                    }
+                    
+                    // Initialize default flowers if they don't exist
+                    initializeDefaultFlowers(context: context)
+                    
+                    // Create default flower as both owned and active
                     let defaultFlower = Flower(
                         name: "Daily Flower",
-                        imageName: "Flower",
+                        imageName: "flower_red_bloomed",
                         isCurrent: true,
+                        isActive: true,
+                        isOwned: true,
                         health: 100.0,
                         maxHealth: 100.0,
-                        careLevel: 1.0
+                        careLevel: 1.0,
+                        streakCount: 0
                     )
                     // Ensure health properties are set
                     if defaultFlower.health == nil {
@@ -78,9 +149,15 @@ class FlowerViewModel: ObservableObject {
                         defaultFlower.maxHealth = 100.0
                         defaultFlower.careLevel = 1.0
                     }
+                    // Ensure streak properties are set
+                    if defaultFlower.streakCount == nil {
+                        defaultFlower.streakCount = 0
+                    }
                     context.insert(defaultFlower)
                     try context.save()
                     self.currentFlower = defaultFlower
+                    // Calculate initial streak
+                    self.calculateStreak(flower: defaultFlower)
                     // Update partner status after creating flower
                     self.updatePartnerStatus()
                     self.isLoading = false
@@ -102,8 +179,10 @@ class FlowerViewModel: ObservableObject {
             if self.currentFlower == nil {
                 let fallbackFlower = Flower(
                     name: "Daily Flower",
-                    imageName: "Flower",
+                    imageName: "flower_red_bloomed",
                     isCurrent: true,
+                    isActive: true,
+                    isOwned: true,
                     health: 100.0,
                     maxHealth: 100.0,
                     careLevel: 1.0
@@ -202,6 +281,142 @@ class FlowerViewModel: ObservableObject {
             try context.save()
         } catch {
             print("Error replenishing flower health: \(error)")
+        }
+    }
+    
+    // Calculate streak count based on consecutive days both users completed care (F-005, D-009)
+    @MainActor
+    func calculateStreak(flower: Flower) {
+        guard let context = modelContext else {
+            streakCount = 0
+            return
+        }
+        
+        do {
+            // Fetch all QuestionHistory entries for this flower (these represent completed days)
+            let descriptor = FetchDescriptor<QuestionHistory>(
+                sortBy: [SortDescriptor(\.dateCompleted, order: .reverse)]
+            )
+            let allHistoryEntries = try context.fetch(descriptor)
+            
+            // Filter for this flower's history entries
+            let flowerHistory = allHistoryEntries.filter { $0.flowerId == flower.id }
+            
+            guard !flowerHistory.isEmpty else {
+                // No completed days yet, streak is 0
+                flower.streakCount = 0
+                flower.lastStreakDate = nil
+                streakCount = 0
+                try context.save()
+                return
+            }
+            
+            // Sort by date completed (most recent first)
+            let sortedHistory = flowerHistory.sorted { $0.dateCompleted > $1.dateCompleted }
+            
+            // Calculate streak by checking consecutive days
+            let calendar = Calendar.current
+            var currentStreak = 0
+            var lastCheckedDate: Date? = nil
+            
+            for entry in sortedHistory {
+                let entryDate = calendar.startOfDay(for: entry.dateCompleted)
+                
+                if let lastDate = lastCheckedDate {
+                    let daysBetween = calendar.dateComponents([.day], from: entryDate, to: lastDate).day ?? 0
+                    
+                    if daysBetween == 1 {
+                        // Consecutive day, increment streak
+                        currentStreak += 1
+                        lastCheckedDate = entryDate
+                    } else if daysBetween > 1 {
+                        // Gap found, streak is broken
+                        break
+                    }
+                    // If daysBetween == 0, it's the same day (shouldn't happen with sorted data, but skip it)
+                } else {
+                    // First entry (most recent completed day)
+                    // Check if it's today or yesterday to start the streak
+                    let today = calendar.startOfDay(for: Date())
+                    let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
+                    
+                    if entryDate == today || entryDate == yesterday {
+                        // Can start/continue streak
+                        currentStreak = 1
+                        lastCheckedDate = entryDate
+                    } else {
+                        // Too old, streak is broken
+                        break
+                    }
+                }
+            }
+            
+            // Update flower's streak count
+            flower.streakCount = currentStreak
+            flower.lastStreakDate = lastCheckedDate
+            streakCount = currentStreak
+            
+            // Save updated streak
+            try context.save()
+            
+            print("✅ Streak calculated: \(currentStreak) days")
+        } catch {
+            print("Error calculating streak: \(error)")
+            streakCount = 0
+        }
+    }
+    
+    // Update streak when both users complete care (called from FlowerCareSheetView)
+    @MainActor
+    func updateStreak(flower: Flower) {
+        calculateStreak(flower: flower)
+    }
+    
+    // Initialize default flowers (10 common flower types)
+    @MainActor
+    func initializeDefaultFlowers(context: ModelContext) {
+        let commonFlowerNames = [
+            "Rose",
+            "Tulip",
+            "Daisy",
+            "Sunflower",
+            "Lily",
+            "Orchid",
+            "Peony",
+            "Lavender",
+            "Marigold",
+            "Carnation"
+        ]
+        
+        // Check if flowers already exist
+        let allFlowersDescriptor = FetchDescriptor<Flower>()
+        guard let existingFlowers = try? context.fetch(allFlowersDescriptor) else { return }
+        
+        // Create flowers that don't exist yet
+        for flowerName in commonFlowerNames {
+            let flowerExists = existingFlowers.contains { $0.name == flowerName }
+            if !flowerExists {
+                let newFlower = Flower(
+                    name: flowerName,
+                    imageName: "flower_red_bloomed",  // Use same image as daily flower
+                    isCurrent: false,
+                    isActive: false,  // Not active by default
+                    isOwned: true,     // Owned but not active
+                    health: 100.0,
+                    maxHealth: 100.0,
+                    careLevel: 1.0,
+                    streakCount: 0
+                )
+                context.insert(newFlower)
+            }
+        }
+        
+        // Save the new flowers
+        do {
+            try context.save()
+            print("✅ Initialized default flowers")
+        } catch {
+            print("❌ Error initializing flowers: \(error)")
         }
     }
 }

@@ -17,6 +17,10 @@ struct Flower_AppApp: App {
             DailyCare.self,  // B-004: Add DailyCare model for saving answers and photos
             ChatMessage.self,  // Chat messages for follow-up conversations
             QuestionHistory.self,  // History of completed questions
+            UserSettings.self,  // User settings including active flower slots
+            FlowerActivationRequest.self,  // Activation/deactivation requests between partners
+            CoupleLevel.self,  // Couple leveling system
+            Achievement.self,  // Achievement tracking
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 

@@ -21,6 +21,7 @@ struct FlowerAnswerView: View {
     @State private var newMessageText: String = ""
     @FocusState private var isTextFieldFocused: Bool
     @Query private var allChatMessages: [ChatMessage]
+    @Query private var userSettings: [UserSettings]
     
     // Filter chat messages for this care entry (include messages from both users' care entries)
     private var chatMessages: [ChatMessage] {
@@ -49,9 +50,35 @@ struct FlowerAnswerView: View {
         return partnerCare != nil
     }
     
+    // Get the question text
+    private var questionText: String {
+        return care.questionText ?? "Question"
+    }
+    
+    // Determine who asked the question first (whoever created their care entry first)
+    private var questionAskedBy: String {
+        if let partnerCare = partnerCare, partnerCare.createdAt < care.createdAt {
+            return partnerCare.effectiveUserId
+        }
+        return care.effectiveUserId
+    }
+    
+    // Check if current user asked the question
+    private var questionAskedByCurrentUser: Bool {
+        return questionAskedBy == currentUserId
+    }
+    
     // Get all messages for this care entry, sorted by date
     private var allMessages: [MessageItem] {
         var messages: [MessageItem] = []
+        
+        // Add question as first message
+        messages.append(MessageItem(
+            type: .question,
+            questionText: questionText,
+            isCurrentUser: questionAskedByCurrentUser,
+            createdAt: min(care.createdAt, partnerCare?.createdAt ?? care.createdAt)
+        ))
         
         // Add initial answers as messages
         if let partnerCare = partnerCare, partnerCare.createdAt < care.createdAt {
@@ -82,21 +109,24 @@ struct FlowerAnswerView: View {
         let type: MessageType
         let care: DailyCare?
         let chatMessage: ChatMessage?
+        let questionText: String?
         let isCurrentUser: Bool
         let createdAt: Date
         
         enum MessageType {
+            case question
             case answer
             case chat
         }
         
-        init(type: MessageType, care: DailyCare? = nil, chatMessage: ChatMessage? = nil, isCurrentUser: Bool) {
+        init(type: MessageType, care: DailyCare? = nil, chatMessage: ChatMessage? = nil, questionText: String? = nil, isCurrentUser: Bool, createdAt: Date? = nil) {
             self.id = UUID()
             self.type = type
             self.care = care
             self.chatMessage = chatMessage
+            self.questionText = questionText
             self.isCurrentUser = isCurrentUser
-            self.createdAt = care?.createdAt ?? chatMessage?.createdAt ?? Date()
+            self.createdAt = createdAt ?? care?.createdAt ?? chatMessage?.createdAt ?? Date()
         }
     }
     
@@ -110,19 +140,15 @@ struct FlowerAnswerView: View {
                 VStack(spacing: 0) {
                     ScrollViewReader { proxy in
                         ScrollView {
-                            VStack(spacing: 24) {
-                                // Flower image at top
-                                Image(flower.imageName)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(width: 150, height: 150)
-                                    .padding(.top, 20)
-                                
-                                // Chat-style message display
+                            VStack(spacing: 16) {
+                                // Chat container with border
                                 VStack(spacing: 16) {
-                                    // Show all messages (answers + chat)
+                                    // Show all messages (question + answers + chat)
                                     ForEach(allMessages) { messageItem in
-                                        if messageItem.type == .answer, let care = messageItem.care {
+                                        if messageItem.type == .question, let questionText = messageItem.questionText {
+                                            questionBubble(questionText: questionText, isCurrentUser: messageItem.isCurrentUser)
+                                                .id(messageItem.id)
+                                        } else if messageItem.type == .answer, let care = messageItem.care {
                                             messageBubble(care: care, isCurrentUser: messageItem.isCurrentUser)
                                                 .id(messageItem.id)
                                         } else if messageItem.type == .chat, let chatMsg = messageItem.chatMessage {
@@ -136,7 +162,15 @@ struct FlowerAnswerView: View {
                                         waitingMessageBubble
                                     }
                                 }
-                                .padding(.vertical)
+                                .padding()
+                                .background(transparentBoxBackground)
+                                .cornerRadius(16)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .stroke(primaryTextColor.opacity(0.2), lineWidth: 2)
+                                )
+                                .padding(.horizontal)
+                                .padding(.top, 20)
                                 
                                 // Spacer to push content up
                                 Spacer()
@@ -189,12 +223,86 @@ struct FlowerAnswerView: View {
         }
     }
     
+    // Get profile picture for a user
+    private func profilePicture(for userId: String) -> Image? {
+        guard let settings = userSettings.first,
+              let pictureData = settings.profilePicture(for: userId),
+              let uiImage = UIImage(data: pictureData) else {
+            return nil
+        }
+        return Image(uiImage: uiImage)
+    }
+    
+    // Profile picture view
+    @ViewBuilder
+    private func profilePictureView(for userId: String) -> some View {
+        if let picture = profilePicture(for: userId) {
+            picture
+                .resizable()
+                .scaledToFill()
+                .frame(width: 32, height: 32)
+                .clipShape(Circle())
+                .overlay(
+                    Circle()
+                        .stroke(primaryTextColor.opacity(0.2), lineWidth: 1)
+                )
+        } else {
+            // Default avatar icon
+            Image(systemName: "person.circle.fill")
+                .font(.system(size: 32))
+                .foregroundColor(primaryTextColor.opacity(0.4))
+        }
+    }
+    
+    // Question bubble view - highlighted differently
+    @ViewBuilder
+    private func questionBubble(questionText: String, isCurrentUser: Bool) -> some View {
+        let userId = isCurrentUser ? currentUserId : (currentUserId == "user1" ? "user2" : "user1")
+        
+        HStack(alignment: .top, spacing: 8) {
+            if !isCurrentUser {
+                profilePictureView(for: userId)
+            }
+            
+            VStack(alignment: isCurrentUser ? .trailing : .leading, spacing: 4) {
+                Text("Question")
+                    .font(.caption)
+                    .foregroundColor(primaryTextColor.opacity(0.6))
+                Text(questionText)
+                    .font(.body)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(
+                        LinearGradient(
+                            colors: [Color.blue.opacity(0.8), Color.purple.opacity(0.8)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .cornerRadius(18)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18)
+                            .stroke(Color.blue.opacity(0.5), lineWidth: 2)
+                    )
+            }
+            .frame(maxWidth: .infinity * 0.75, alignment: isCurrentUser ? .trailing : .leading)
+            
+            if isCurrentUser {
+                profilePictureView(for: userId)
+            }
+        }
+    }
+    
     // Message bubble view
     @ViewBuilder
     private func messageBubble(care: DailyCare, isCurrentUser: Bool) -> some View {
+        let userId = care.effectiveUserId
+        
         if isCurrentUser {
             // Your message - right aligned (sent)
-            HStack {
+            HStack(alignment: .top, spacing: 8) {
                 Spacer()
                 VStack(alignment: .trailing, spacing: 8) {
                     // Text message
@@ -205,6 +313,10 @@ struct FlowerAnswerView: View {
                         .padding(.vertical, 12)
                         .background(Color.green)
                         .cornerRadius(18)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18)
+                                .stroke(Color.green.opacity(0.3), lineWidth: 1.5)
+                        )
                     
                     // Photo if available
                     if let photoData = care.photoData,
@@ -221,11 +333,14 @@ struct FlowerAnswerView: View {
                     }
                 }
                 .frame(maxWidth: .infinity * 0.75, alignment: .trailing)
+                
+                profilePictureView(for: userId)
             }
-            .padding(.horizontal)
         } else {
             // Partner's message - left aligned (received)
-            HStack {
+            HStack(alignment: .top, spacing: 8) {
+                profilePictureView(for: userId)
+                
                 VStack(alignment: .leading, spacing: 8) {
                     // Text message
                     Text(care.answerText)
@@ -235,6 +350,10 @@ struct FlowerAnswerView: View {
                         .padding(.vertical, 12)
                         .background(transparentBoxBackground)
                         .cornerRadius(18)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18)
+                                .stroke(primaryTextColor.opacity(0.2), lineWidth: 1.5)
+                        )
                     
                     // Photo if available
                     if let photoData = care.photoData,
@@ -251,15 +370,20 @@ struct FlowerAnswerView: View {
                     }
                 }
                 .frame(maxWidth: .infinity * 0.75, alignment: .leading)
+                
                 Spacer()
             }
-            .padding(.horizontal)
         }
     }
     
     // Waiting message bubble
+    @ViewBuilder
     private var waitingMessageBubble: some View {
-        HStack {
+        let partnerId = currentUserId == "user1" ? "user2" : "user1"
+        
+        HStack(alignment: .top, spacing: 8) {
+            profilePictureView(for: partnerId)
+            
             VStack(alignment: .leading, spacing: 8) {
                 Text("Waiting for partner to answer...")
                     .font(.body)
@@ -269,19 +393,25 @@ struct FlowerAnswerView: View {
                     .padding(.vertical, 12)
                     .background(transparentBoxBackground)
                     .cornerRadius(18)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18)
+                            .stroke(primaryTextColor.opacity(0.2), lineWidth: 1.5)
+                    )
             }
             .frame(maxWidth: .infinity * 0.75, alignment: .leading)
+            
             Spacer()
         }
-        .padding(.horizontal)
     }
     
     // Chat message bubble
     @ViewBuilder
     private func chatMessageBubble(message: ChatMessage, isCurrentUser: Bool) -> some View {
+        let userId = message.effectiveUserId
+        
         if isCurrentUser {
             // Your chat message - right aligned (sent)
-            HStack {
+            HStack(alignment: .top, spacing: 8) {
                 Spacer()
                 Text(message.messageText)
                     .font(.body)
@@ -290,11 +420,18 @@ struct FlowerAnswerView: View {
                     .padding(.vertical, 12)
                     .background(Color.green)
                     .cornerRadius(18)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18)
+                            .stroke(Color.green.opacity(0.3), lineWidth: 1.5)
+                    )
+                
+                profilePictureView(for: userId)
             }
-            .padding(.horizontal)
         } else {
             // Partner's chat message - left aligned (received)
-            HStack {
+            HStack(alignment: .top, spacing: 8) {
+                profilePictureView(for: userId)
+                
                 Text(message.messageText)
                     .font(.body)
                     .foregroundColor(primaryTextColor)
@@ -302,9 +439,13 @@ struct FlowerAnswerView: View {
                     .padding(.vertical, 12)
                     .background(transparentBoxBackground)
                     .cornerRadius(18)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18)
+                            .stroke(primaryTextColor.opacity(0.2), lineWidth: 1.5)
+                    )
+                
                 Spacer()
             }
-            .padding(.horizontal)
         }
     }
     
