@@ -298,16 +298,13 @@ struct HistoryView: View {
                         .foregroundColor(entry.effectiveIsSaved ? .yellow : primaryTextColor.opacity(0.6))
                 }
                 .padding(.top, 8)
-                .padding(.trailing, 8)
                 
-                // Unread indicator
-                if hasUnread {
-                    Circle()
-                        .fill(Color.red)
-                        .frame(width: 10, height: 10)
-                        .padding(.top, 8)
-                        .padding(.trailing, entry.effectiveIsSaved ? 0 : 8)
-                }
+                // Unread indicator (always reserve space to prevent shifting)
+                Circle()
+                    .fill(hasUnread ? Color.red : Color.clear)
+                    .frame(width: 10, height: 10)
+                    .padding(.top, 8)
+                    .padding(.trailing, 8)
             }
         }
     }
