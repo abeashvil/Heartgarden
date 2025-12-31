@@ -13,8 +13,12 @@ final class Flower {
     var id: UUID
     var name: String
     var imageName: String
-    var isCurrent: Bool
+    var isCurrent: Bool  // Which active flower is currently being displayed
     var createdAt: Date
+    
+    // Active vs Owned distinction
+    var isActive: Bool?  // Whether this flower is currently active (being cared for)
+    var isOwned: Bool?   // Whether this flower type is owned (in the index)
     
     // Health system properties (optional for backward compatibility)
     var health: Double?  // Current health (0-100)
@@ -39,12 +43,22 @@ final class Flower {
         return careLevel ?? 1.0
     }
     
+    var effectiveIsActive: Bool {
+        return isActive ?? false
+    }
+    
+    var effectiveIsOwned: Bool {
+        return isOwned ?? false
+    }
+    
     init(
         id: UUID = UUID(),
         name: String,
         imageName: String,
         isCurrent: Bool = false,
         createdAt: Date = Date(),
+        isActive: Bool? = false,
+        isOwned: Bool? = false,
         health: Double? = 100.0,
         maxHealth: Double? = 100.0,
         careLevel: Double? = 1.0,
@@ -57,6 +71,8 @@ final class Flower {
         self.imageName = imageName
         self.isCurrent = isCurrent
         self.createdAt = createdAt
+        self.isActive = isActive
+        self.isOwned = isOwned
         self.health = health
         self.maxHealth = maxHealth
         self.careLevel = careLevel

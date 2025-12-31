@@ -40,11 +40,55 @@ class FlowerViewModel: ObservableObject {
         // Try to load from SwiftData if context is available
         if let context = modelContext {
             do {
-                let descriptor = FetchDescriptor<Flower>(
+                // First, migrate existing flowers to have isActive and isOwned
+                let allFlowersDescriptor = FetchDescriptor<Flower>()
+                let allFlowers = try context.fetch(allFlowersDescriptor)
+                for flower in allFlowers {
+                    // Migrate: if isActive is nil, set based on isCurrent
+                    if flower.isActive == nil {
+                        flower.isActive = flower.isCurrent
+                        flower.isOwned = true  // Existing flowers are owned
+                        try context.save()
+                    }
+                }
+                
+                // Initialize default flowers if needed
+                initializeDefaultFlowers(context: context)
+                
+                // Update UserSettings to 3 slots if needed
+                let settingsDescriptor = FetchDescriptor<UserSettings>()
+                if let settings = try? context.fetch(settingsDescriptor).first {
+                    if settings.activeFlowerSlots == nil || settings.effectiveActiveFlowerSlots < 3 {
+                        settings.activeFlowerSlots = 3
+                        try context.save()
+                    }
+                } else {
+                    // Create settings with 3 slots
+                    let newSettings = UserSettings(activeFlowerSlots: 3)
+                    context.insert(newSettings)
+                    try context.save()
+                }
+                
+                // Load current flower (prefer isCurrent, but fallback to first active)
+                let currentDescriptor = FetchDescriptor<Flower>(
                     predicate: #Predicate<Flower> { $0.isCurrent == true },
                     sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
                 )
-                let flowers = try context.fetch(descriptor)
+                var flowers = try context.fetch(currentDescriptor)
+                
+                // If no current flower, try to find first active flower
+                if flowers.isEmpty {
+                    let activeDescriptor = FetchDescriptor<Flower>(
+                        predicate: #Predicate<Flower> { $0.isActive == true },
+                        sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+                    )
+                    flowers = try context.fetch(activeDescriptor)
+                    // Set first active flower as current
+                    if let firstActive = flowers.first {
+                        firstActive.isCurrent = true
+                        try context.save()
+                    }
+                }
                 
                 if let flower = flowers.first {
                     // Found current flower in database
@@ -71,10 +115,29 @@ class FlowerViewModel: ObservableObject {
                     return
                 } else {
                     // No current flower found, create a default one
+                    // First, ensure UserSettings exists with 3 active slots
+                    let settingsDescriptor = FetchDescriptor<UserSettings>()
+                    let existingSettings = try? context.fetch(settingsDescriptor)
+                    let settings = existingSettings?.first ?? UserSettings(activeFlowerSlots: 3)
+                    if existingSettings?.isEmpty ?? true {
+                        context.insert(settings)
+                    } else {
+                        // Update existing settings to 3 slots if it's still 1
+                        if settings.activeFlowerSlots == nil || settings.effectiveActiveFlowerSlots < 3 {
+                            settings.activeFlowerSlots = 3
+                        }
+                    }
+                    
+                    // Initialize default flowers if they don't exist
+                    initializeDefaultFlowers(context: context)
+                    
+                    // Create default flower as both owned and active
                     let defaultFlower = Flower(
                         name: "Daily Flower",
-                        imageName: "Flower",
+                        imageName: "flower_red_bloomed",
                         isCurrent: true,
+                        isActive: true,
+                        isOwned: true,
                         health: 100.0,
                         maxHealth: 100.0,
                         careLevel: 1.0,
@@ -116,8 +179,10 @@ class FlowerViewModel: ObservableObject {
             if self.currentFlower == nil {
                 let fallbackFlower = Flower(
                     name: "Daily Flower",
-                    imageName: "Flower",
+                    imageName: "flower_red_bloomed",
                     isCurrent: true,
+                    isActive: true,
+                    isOwned: true,
                     health: 100.0,
                     maxHealth: 100.0,
                     careLevel: 1.0
@@ -305,6 +370,54 @@ class FlowerViewModel: ObservableObject {
     @MainActor
     func updateStreak(flower: Flower) {
         calculateStreak(flower: flower)
+    }
+    
+    // Initialize default flowers (10 common flower types)
+    @MainActor
+    func initializeDefaultFlowers(context: ModelContext) {
+        let commonFlowerNames = [
+            "Rose",
+            "Tulip",
+            "Daisy",
+            "Sunflower",
+            "Lily",
+            "Orchid",
+            "Peony",
+            "Lavender",
+            "Marigold",
+            "Carnation"
+        ]
+        
+        // Check if flowers already exist
+        let allFlowersDescriptor = FetchDescriptor<Flower>()
+        guard let existingFlowers = try? context.fetch(allFlowersDescriptor) else { return }
+        
+        // Create flowers that don't exist yet
+        for flowerName in commonFlowerNames {
+            let flowerExists = existingFlowers.contains { $0.name == flowerName }
+            if !flowerExists {
+                let newFlower = Flower(
+                    name: flowerName,
+                    imageName: "flower_red_bloomed",  // Use same image as daily flower
+                    isCurrent: false,
+                    isActive: false,  // Not active by default
+                    isOwned: true,     // Owned but not active
+                    health: 100.0,
+                    maxHealth: 100.0,
+                    careLevel: 1.0,
+                    streakCount: 0
+                )
+                context.insert(newFlower)
+            }
+        }
+        
+        // Save the new flowers
+        do {
+            try context.save()
+            print("✅ Initialized default flowers")
+        } catch {
+            print("❌ Error initializing flowers: \(error)")
+        }
     }
 }
 
