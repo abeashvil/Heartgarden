@@ -6,27 +6,63 @@
 //
 
 import SwiftUI
+import SwiftData
 import PhotosUI
+import UIKit
+import AVFoundation
 
-// Flower Care Screen (S-002) - F-002: Daily Question
+// Flower Care Screen (S-002) - F-002: Daily Question, F-003: Photo Sending
 struct FlowerCareView: View {
     let flower: Flower
     let selectedTheme: AppTheme
+    let currentUserId: String
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext  // B-004: For saving data
+    @Query private var allCareEntries: [DailyCare]
+    @Query(sort: [SortDescriptor(\QuestionHistory.dateCompleted, order: .reverse)]) private var historyEntries: [QuestionHistory]
     
     @State private var answerText: String = ""
     @State private var selectedPhoto: PhotosPickerItem? = nil
     @State private var selectedPhotoData: Data? = nil
     @State private var showPhotoPicker = false
-    @State private var showImagePicker = false
+    @State private var showCamera = false
+    @State private var cameraImage: UIImage?
     @State private var showError = false
     @State private var errorMessage = ""
+    @State private var isSaving = false
     
-    // Daily question system (F-002)
+    // Daily question system (F-002) - changes when questions are answered
+    // Each user gets a new question after answering (not waiting for partner)
     private var dailyQuestion: String {
-        // Get today's question based on day of year for variety
-        let dayOfYear = Calendar.current.ordinality(of: .day, in: .year, for: Date()) ?? 1
-        let questionIndex = dayOfYear % dailyQuestions.count
+        let today = Calendar.current.startOfDay(for: Date())
+        
+        // Get all questions that have been used by this user today (not archived yet)
+        let userAnswersToday = allCareEntries.filter { care in
+            care.flowerId == flower.id &&
+            care.effectiveUserId == currentUserId &&
+            Calendar.current.isDate(care.date, inSameDayAs: today) &&
+            !care.effectiveIsArchived
+        }
+        
+        // Get all questions that have been archived or moved to history
+        let archivedQuestions = Set(
+            allCareEntries.filter { $0.effectiveIsArchived }.compactMap { $0.questionText } +
+            historyEntries.map { $0.questionText }
+        )
+        
+        // Get questions used by this user today (not yet archived)
+        let userQuestionsToday = Set(userAnswersToday.compactMap { $0.questionText })
+        
+        // Find the first question that hasn't been used by this user today and isn't archived
+        if let unusedQuestion = dailyQuestions.first(where: { 
+            !userQuestionsToday.contains($0) && !archivedQuestions.contains($0)
+        }) {
+            return unusedQuestion
+        }
+        
+        // If all questions have been used, cycle through them based on count
+        let totalUsed = userQuestionsToday.count + archivedQuestions.count
+        let questionIndex = totalUsed % dailyQuestions.count
         return dailyQuestions[questionIndex]
     }
     
@@ -66,6 +102,16 @@ struct FlowerCareView: View {
         switch selectedTheme {
         case .darkMode:
             return Color.white
+        default:
+            return Color.primary
+        }
+    }
+    
+    // Text color for TextEditor - dark text in dark mode for visibility on light background
+    private var textEditorColor: Color {
+        switch selectedTheme {
+        case .darkMode:
+            return Color.black // Dark text for visibility on light background
         default:
             return Color.primary
         }
@@ -113,7 +159,7 @@ struct FlowerCareView: View {
                                 .padding(12)
                                 .background(transparentBoxBackground)
                                 .cornerRadius(12)
-                                .foregroundColor(primaryTextColor)
+                                .foregroundColor(textEditorColor)
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 12)
                                         .stroke(primaryTextColor.opacity(0.2), lineWidth: 1)
@@ -121,14 +167,14 @@ struct FlowerCareView: View {
                         }
                         .padding(.horizontal)
                         
-                        // Photo Button (F-003 placeholder)
+                        // Photo Button (F-003: Photo Sending)
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Add a Photo")
                                 .font(.headline)
                                 .foregroundColor(primaryTextColor.opacity(0.7))
                             
                             Button(action: {
-                                showPhotoPicker = true
+                                showPhotoActionSheet()
                             }) {
                                 HStack {
                                     if selectedPhotoData != nil {
@@ -204,6 +250,26 @@ struct FlowerCareView: View {
                     }
                 }
             }
+            .onChange(of: cameraImage) {
+                if let image = cameraImage {
+                    // Convert UIImage to Data
+                    selectedPhotoData = image.jpegData(compressionQuality: 0.8)
+                }
+            }
+            .sheet(isPresented: $showCamera) {
+                CameraView(image: $cameraImage)
+            }
+            .confirmationDialog("Add Photo", isPresented: $showPhotoOptions, titleVisibility: .visible) {
+                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    Button("Take Photo") {
+                        handleCameraAction()
+                    }
+                }
+                Button("Choose from Library") {
+                    showPhotoPicker = true
+                }
+                Button("Cancel", role: .cancel) { }
+            }
             .alert("Error", isPresented: $showError) {
                 Button("OK", role: .cancel) { }
             } message: {
@@ -229,7 +295,40 @@ struct FlowerCareView: View {
         !answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     
-    // Send care function
+    @State private var showPhotoOptions = false
+    
+    // Show photo action sheet using SwiftUI confirmationDialog (F-003: Photo Sending)
+    private func showPhotoActionSheet() {
+        showPhotoOptions = true
+    }
+    
+    // Handle camera permission and show camera
+    private func handleCameraAction() {
+        let authStatus = AVCaptureDevice.authorizationStatus(for: .video)
+        switch authStatus {
+        case .authorized:
+            showCamera = true
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                DispatchQueue.main.async {
+                    if granted {
+                        showCamera = true
+                    } else {
+                        showError = true
+                        errorMessage = "Camera access is required to take photos. Please enable it in Settings."
+                    }
+                }
+            }
+        case .denied, .restricted:
+            showError = true
+            errorMessage = "Camera access is required. Please enable it in Settings."
+        @unknown default:
+            showError = true
+            errorMessage = "Unable to access camera."
+        }
+    }
+    
+    // Send care function (B-004: Save answers and photos)
     private func sendCare() {
         // Validate answer
         guard !answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -238,22 +337,51 @@ struct FlowerCareView: View {
             return
         }
         
-        // TODO: In B-004, save answer and photo to database
-        // For now, just show success and dismiss
-        print("Answer: \(answerText)")
-        if let photoData = selectedPhotoData {
-            print("Photo data size: \(photoData.count) bytes")
-        }
+        // Prevent multiple saves
+        guard !isSaving else { return }
+        isSaving = true
         
-        // Dismiss after sending
-        dismiss()
+        // Save to database (B-004: D-006 and D-007)
+        do {
+            // Create DailyCare entry
+            let care = DailyCare(
+                flowerId: flower.id,
+                userId: currentUserId,  // Save with current user ID
+                date: Calendar.current.startOfDay(for: Date()), // Use start of day for date matching
+                answerText: answerText.trimmingCharacters(in: .whitespacesAndNewlines), // D-006
+                photoData: selectedPhotoData, // D-007
+                isCompleted: true,
+                questionText: dailyQuestion  // Save the question that was answered
+            )
+            
+            // Insert and save to SwiftData
+            modelContext.insert(care)
+            try modelContext.save()
+            
+            // Health will be replenished in FlowerCareSheetView when both users have answered
+            print("Care saved successfully!")
+            print("Answer: \(care.answerText)")
+            print("Photo: \(care.photoData != nil ? "Yes (\(care.photoData!.count) bytes)" : "No")")
+            print("Answer: \(care.answerText)")
+            print("Photo: \(care.photoData != nil ? "Yes (\(care.photoData!.count) bytes)" : "No")")
+            
+            // Don't dismiss - the sheet will automatically update to show FlowerAnswerView
+            // This allows the user to see their answer and continue chatting
+            // The FlowerCareSheetView will detect the new care entry and switch views
+        } catch {
+            isSaving = false
+            showError = true
+            errorMessage = "Failed to save your care. Please try again."
+            print("Error saving care: \(error)")
+        }
     }
 }
 
 #Preview {
     FlowerCareView(
         flower: Flower(name: "Daily Flower", imageName: "Flower", isCurrent: true),
-        selectedTheme: .pastelGreen
+        selectedTheme: .pastelGreen,
+        currentUserId: "user1"
     )
 }
 

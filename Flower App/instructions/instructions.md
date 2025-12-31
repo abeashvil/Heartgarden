@@ -127,7 +127,7 @@ Over time, couples can collect many flowers and see them all in a garden.
 - **B-006**: Add F-005 and D-009 for streaks.  
 - **B-007**: Build S-003 and F-007 for the garden view.  
 - **B-008**: Add F-006 and S-004 for unlocking new flowers.  
-- **B-009**: Add reminders, dark mode, and polish the app.
+- **B-009**: Add reminders and polish the app.
 
 ---
 🌱 End of Requirements Document

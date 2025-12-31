@@ -14,6 +14,9 @@ struct Flower_AppApp: App {
         let schema = Schema([
             Item.self,
             Flower.self,
+            DailyCare.self,  // B-004: Add DailyCare model for saving answers and photos
+            ChatMessage.self,  // Chat messages for follow-up conversations
+            QuestionHistory.self,  // History of completed questions
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
