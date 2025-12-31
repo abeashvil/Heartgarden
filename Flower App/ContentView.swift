@@ -38,6 +38,7 @@ enum TabSelection {
     case main
     case history
     case index
+    case achievements
 }
 
 // Preference key for button frame tracking
@@ -60,12 +61,15 @@ struct ContentView: View {
     @State private var showThemeDropdown = false
     @State private var buttonFrame: CGRect = .zero
     @State private var selectedTab: TabSelection = .main  // Track current tab
+    @State private var pulseScale: CGFloat = 1.0  // For pulsing question indicator
     @State private var showStreakDebug = false
     @State private var currentActiveFlowerIndex: Int = 0  // Index of current active flower in swipe view
     @Query(sort: [SortDescriptor(\QuestionHistory.dateCompleted, order: .reverse)]) private var allHistoryEntries: [QuestionHistory]
     @Query private var allCareEntries: [DailyCare]
     @Query private var allChatMessages: [ChatMessage]
     @Query(sort: [SortDescriptor(\Flower.createdAt, order: .reverse)]) private var allFlowers: [Flower]
+    @Query private var coupleLevels: [CoupleLevel]
+    @Query(sort: [SortDescriptor(\Achievement.category, order: .forward), SortDescriptor(\Achievement.requirement, order: .forward)]) private var allAchievements: [Achievement]
     
     // Display enhancement states - scoped to flower view only
     @State private var flowerParticleOpacity: Double = 0.3
@@ -269,7 +273,7 @@ struct ContentView: View {
                 sparkleParticle(index: index)
             }
             
-            // Main flower image with subtle parallax effect
+            // Main flower image with subtle parallax effect (includes pulsing indicator if needed)
             flowerImage(flower: flower)
         }
         .onAppear {
@@ -278,6 +282,69 @@ struct ContentView: View {
             Task { @MainActor in
                 startFlowerAnimations()
             }
+        }
+    }
+    
+    // Check if partner has unanswered questions on this flower
+    private func hasUnansweredPartnerQuestion(flower: Flower) -> Bool {
+        let today = Calendar.current.startOfDay(for: Date())
+        let partnerId = currentUserId == "user1" ? "user2" : "user1"
+        
+        // Get all questions partner asked on this flower today
+        let partnerQuestions = allCareEntries.filter { care in
+            care.flowerId == flower.id &&
+            care.effectiveUserId == partnerId &&
+            Calendar.current.isDate(care.date, inSameDayAs: today) &&
+            care.questionText != nil &&
+            !care.effectiveIsArchived
+        }
+        
+        // Get all questions current user answered on this flower today
+        let userAnswers = Set(allCareEntries.filter { care in
+            care.flowerId == flower.id &&
+            care.effectiveUserId == currentUserId &&
+            Calendar.current.isDate(care.date, inSameDayAs: today) &&
+            care.questionText != nil &&
+            !care.effectiveIsArchived
+        }.compactMap { $0.questionText })
+        
+        // Check if partner asked a question that user hasn't answered yet
+        return partnerQuestions.contains { care in
+            guard let questionText = care.questionText else { return false }
+            return !userAnswers.contains(questionText)
+        }
+    }
+    
+    // Pulsing question indicator
+    @ViewBuilder
+    private var partnerQuestionIndicator: some View {
+        VStack {
+            HStack {
+                Spacer()
+                ZStack {
+                    // Pulsing background circle
+                    Circle()
+                        .fill(Color.blue.opacity(0.2))
+                        .frame(width: 40, height: 40)
+                        .scaleEffect(pulseScale)
+                        .animation(
+                            Animation.easeInOut(duration: 1.0)
+                                .repeatForever(autoreverses: true),
+                            value: pulseScale
+                        )
+                    
+                    // Question mark icon
+                    Image(systemName: "questionmark.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundColor(.blue)
+                }
+                .padding(.top, -10)
+                .padding(.trailing, -10)
+            }
+            Spacer()
+        }
+        .onAppear {
+            pulseScale = 1.2
         }
     }
     
@@ -328,20 +395,27 @@ struct ContentView: View {
             ? Color.white.opacity(0.2) 
             : Color.black.opacity(0.15)
         
-        Image(flower.imageName)
-            .resizable()
-            .scaledToFit()
-            .frame(width: 200, height: 200)
-            .shadow(color: shadowColor, radius: 15, x: 0, y: 5)
-            .offset(x: flowerParallaxOffset.width, y: flowerParallaxOffset.height)
-            .animation(
-                Animation.easeInOut(duration: 3.0)
-                    .repeatForever(autoreverses: true),
-                value: flowerParallaxOffset
-            )
-            .onTapGesture {
-                showFlowerCare = true
+        ZStack {
+            Image(flower.imageName)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 200, height: 200)
+                .shadow(color: shadowColor, radius: 15, x: 0, y: 5)
+                .offset(x: flowerParallaxOffset.width, y: flowerParallaxOffset.height)
+                .animation(
+                    Animation.easeInOut(duration: 3.0)
+                        .repeatForever(autoreverses: true),
+                    value: flowerParallaxOffset
+                )
+            
+            // Pulsing question indicator if partner has unanswered questions
+            if hasUnansweredPartnerQuestion(flower: flower) {
+                partnerQuestionIndicator
             }
+        }
+        .onTapGesture {
+            showFlowerCare = true
+        }
     }
     
     // Start flower animations - only affects flower view
@@ -566,7 +640,102 @@ struct ContentView: View {
         } else if selectedTab == .index {
             FlowerIndexView(selectedTheme: selectedTheme, currentUserId: currentUserId)
                 .padding(.bottom, 80)
+        } else if selectedTab == .achievements {
+            AchievementsView(selectedTheme: selectedTheme, currentUserId: currentUserId)
+                .padding(.bottom, 80)
         }
+    }
+    
+    // Get or create couple level with migration handling
+    private var coupleLevel: CoupleLevel {
+        if let level = coupleLevels.first {
+            // Migrate existing level: ensure guaranteedQuestionsPerUser is set (for existing data)
+            if level.guaranteedQuestionsPerUser == nil || level.guaranteedQuestionsPerUser! <= 0 {
+                level.guaranteedQuestionsPerUser = 2
+                do {
+                    try modelContext.save()
+                } catch {
+                    print("Error migrating CoupleLevel: \(error)")
+                }
+            }
+            // Reset questions if new day
+            if level.shouldResetQuestions {
+                level.resetDailyQuestions()
+                do {
+                    try modelContext.save()
+                } catch {
+                    print("Error resetting questions: \(error)")
+                }
+            }
+            return level
+        } else {
+            // Create default level
+            let newLevel = CoupleLevel()
+            modelContext.insert(newLevel)
+            do {
+                try modelContext.save()
+            } catch {
+                print("Error creating CoupleLevel: \(error)")
+            }
+            return newLevel
+        }
+    }
+    
+    // Level bar view
+    @ViewBuilder
+    private var levelBarView: some View {
+        let level = coupleLevel
+        let progress = level.progressToNextLevel
+        
+        VStack(spacing: 4) {
+            HStack {
+                // Level number
+                HStack(spacing: 4) {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 14))
+                        .foregroundColor(.yellow)
+                    Text("Level \(level.level)")
+                        .font(.headline)
+                        .foregroundColor(primaryTextColor)
+                }
+                
+                Spacer()
+                
+                // Experience info
+                Text("\(level.experience) / \(level.experienceNeededForNextLevel) XP")
+                    .font(.caption)
+                    .foregroundColor(primaryTextColor.opacity(0.7))
+            }
+            
+            // Progress bar
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    // Background
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(selectedTheme == .darkMode ? Color.white.opacity(0.1) : Color.white.opacity(0.4))
+                        .frame(height: 12)
+                    
+                    // Progress fill
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.blue, Color.purple],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: geometry.size.width * progress, height: 12)
+                        .animation(.easeInOut, value: progress)
+                }
+            }
+            .frame(height: 12)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(selectedTheme == .darkMode ? Color.white.opacity(0.1) : Color.white.opacity(0.4))
+        )
     }
     
     // Garden button color based on theme
@@ -587,6 +756,118 @@ struct ContentView: View {
         default:
             return Color.white // White text for pastel themes
         }
+    }
+    
+    // Helper function to calculate per-user question status
+    private func calculatePerUserQuestionStatus(coupleLevel: CoupleLevel, today: Date) -> (userAsked: Int, partnerAsked: Int, userRemaining: Int) {
+        let partnerId = currentUserId == "user1" ? "user2" : "user1"
+        
+        // Count only questions where the user was FIRST to answer (initiated the question)
+        // Don't count questions where they answered their partner's question
+        // IMPORTANT: Count ALL questions (including archived) to get accurate count
+        let allQuestionsToday = allCareEntries.filter { care in
+            Calendar.current.isDate(care.date, inSameDayAs: today) &&
+            care.questionText != nil
+        }
+        
+        // Group by flower and question text to find who asked first
+        var userAsked = 0
+        var partnerAsked = 0
+        let questionGroups = Dictionary(grouping: allQuestionsToday) { care in
+            "\(care.flowerId.uuidString)|\(care.questionText ?? "")"
+        }
+        
+        for (_, careEntries) in questionGroups {
+            // Sort by creation time to find who answered first
+            let sortedEntries = careEntries.sorted { $0.createdAt < $1.createdAt }
+            if let firstEntry = sortedEntries.first {
+                if firstEntry.effectiveUserId == currentUserId {
+                    userAsked += 1
+                } else if firstEntry.effectiveUserId == partnerId {
+                    partnerAsked += 1
+                }
+            }
+        }
+        
+        // Calculate remaining for current user
+        let totalAvailable = coupleLevel.questionsAvailable
+        let basePerUser = totalAvailable / 2
+        let hasExtra = totalAvailable % 2 == 1
+        
+        let userRemaining: Int
+        if hasExtra {
+            if userAsked >= basePerUser && partnerAsked < basePerUser {
+                userRemaining = max(0, basePerUser + 1 - userAsked)
+            } else if userAsked < basePerUser {
+                userRemaining = basePerUser - userAsked
+            } else {
+                userRemaining = 0
+            }
+        } else {
+            userRemaining = max(0, basePerUser - userAsked)
+        }
+        
+        return (userAsked, partnerAsked, userRemaining)
+    }
+    
+    // Questions remaining counter for main view - condensed style matching streak box
+    @ViewBuilder
+    private func questionsRemainingCounter(flower: Flower) -> some View {
+        let coupleLevel: CoupleLevel = {
+            if let level = coupleLevels.first {
+                // Migrate existing level: ensure guaranteedQuestionsPerUser is set (for existing data)
+                if level.guaranteedQuestionsPerUser == nil || level.guaranteedQuestionsPerUser! <= 0 {
+                    level.guaranteedQuestionsPerUser = 2
+                    do {
+                        try modelContext.save()
+                    } catch {
+                        print("Error migrating CoupleLevel: \(error)")
+                    }
+                }
+                return level
+            } else {
+                let newLevel = CoupleLevel()
+                modelContext.insert(newLevel)
+                do {
+                    try modelContext.save()
+                } catch {
+                    print("Error creating CoupleLevel: \(error)")
+                }
+                return newLevel
+            }
+        }()
+        let today = Calendar.current.startOfDay(for: Date())
+        
+        // Calculate per-user question status
+        let (userAsked, partnerAsked, userRemaining) = calculatePerUserQuestionStatus(coupleLevel: coupleLevel, today: today)
+        let totalAvailable = coupleLevel.questionsAvailable
+        let basePerUser = totalAvailable / 2
+        let hasExtra = totalAvailable % 2 == 1
+        
+        // Calculate limits for display
+        let userTotalLimit = hasExtra && userAsked >= basePerUser && partnerAsked < basePerUser 
+            ? basePerUser + 1 
+            : basePerUser
+        
+        let partnerTotalLimit = hasExtra && partnerAsked >= basePerUser && userAsked < basePerUser 
+            ? basePerUser + 1 
+            : basePerUser
+        
+        let partnerRemaining = max(0, partnerTotalLimit - partnerAsked)
+        
+        // Condensed single-line display matching streak box style
+        HStack(spacing: 8) {
+            Image(systemName: "questionmark.circle.fill")
+                .foregroundColor(.blue)
+            Text("\(userRemaining)/\(userTotalLimit) • Partner: \(partnerRemaining)/\(partnerTotalLimit)")
+                .font(.subheadline)
+                .foregroundColor(primaryTextColor)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(transparentBoxBackground)
+        .cornerRadius(10)
     }
     
     // Health bar view
@@ -724,6 +1005,11 @@ struct ContentView: View {
         Group {
             if let flower = currentActiveFlower {
                 VStack(spacing: 0) {
+                    // Level bar at the top
+                    levelBarView
+                        .padding(.top, 10)
+                        .padding(.horizontal)
+                    
                     Spacer()
                     
                     // Flower Image - centered in the middle with display enhancements
@@ -784,21 +1070,10 @@ struct ContentView: View {
                     
                     // Bottom section with status boxes
                     VStack(spacing: 12) {
-                        // Partner Status (F-004 placeholder) - Same size as streak box
-                        HStack(spacing: 12) {
-                            Image(systemName: partnerStatusIcon)
-                                .foregroundColor(partnerStatusColor)
-                            Text(partnerStatusText)
-                                .font(.subheadline)
-                                .foregroundColor(primaryTextColor)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
-                        .background(transparentBoxBackground)
-                        .cornerRadius(10)
+                        // Questions remaining - condensed style matching streak box
+                        questionsRemainingCounter(flower: flower)
                         
-                        // Streak Count (F-005) - Same size as partner status box
+                        // Streak Count (F-005)
                         HStack(spacing: 8) {
                             Image(systemName: "flame.fill")
                                 .foregroundColor(.orange)
@@ -915,6 +1190,19 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 16)
+            }
+            
+            // Achievements page tab (trophy icon)
+            Button(action: {
+                withAnimation {
+                    selectedTab = .achievements
+                }
+            }) {
+                Image(systemName: "trophy.fill")
+                    .font(.system(size: 24))
+                    .foregroundColor(selectedTab == .achievements ? primaryTextColor : primaryTextColor.opacity(0.5))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
             }
         }
         .background(
@@ -1510,7 +1798,8 @@ struct FlowerIndexView: View {
     @Query(sort: [SortDescriptor(\Flower.name, order: .forward)]) private var allFlowers: [Flower]
     @Query private var userSettings: [UserSettings]
     @Query(sort: [SortDescriptor(\FlowerActivationRequest.createdAt, order: .reverse)]) private var allRequests: [FlowerActivationRequest]
-    @State private var fadingOutFlowerId: UUID? = nil  // Track which flower is fading out
+    @State private var fadingOutFlowerId: UUID? = nil
+    @State private var showUnlockScreen = false  // Track which flower is fading out
     
     // Filter to show only owned flowers, sorted with active flowers first
     private var ownedFlowers: [Flower] {
@@ -1615,6 +1904,9 @@ struct FlowerIndexView: View {
                         // Active slots info
                         activeSlotsInfo
                         
+                        // Unlock button
+                        unlockButton
+                        
                         // Pending requests section
                         if !pendingRequests.isEmpty {
                             pendingRequestsSection
@@ -1634,6 +1926,88 @@ struct FlowerIndexView: View {
                         .padding()
                     }
                     .padding(.top, 0)  // Remove top padding
+                }
+            }
+        }
+        .sheet(isPresented: $showUnlockScreen) {
+            UnlockScreen(selectedTheme: selectedTheme)
+                .environment(\.modelContext, modelContext)
+        }
+        .onAppear {
+            initializeUnlockableFlowers()
+            checkAndUnlockFlowers()
+        }
+    }
+    
+    // Initialize unlockable flowers with streak requirements
+    private func initializeUnlockableFlowers() {
+        // Define unlockable flowers with their streak requirements
+        let unlockableFlowerData: [(name: String, imageName: String, streakRequirement: Int)] = [
+            ("Cherry Blossom", "flower_red_bloomed", 7),
+            ("Jasmine", "flower_red_bloomed", 14),
+            ("Hibiscus", "flower_red_bloomed", 21),
+            ("Magnolia", "flower_red_bloomed", 30),
+            ("Azalea", "flower_red_bloomed", 45),
+            ("Camellia", "flower_red_bloomed", 60),
+            ("Wisteria", "flower_red_bloomed", 90),
+            ("Gardenia", "flower_red_bloomed", 120),
+            ("Plum Blossom", "flower_red_bloomed", 180),
+            ("Lotus", "flower_red_bloomed", 365)
+        ]
+        
+        do {
+            for flowerData in unlockableFlowerData {
+                // Check if flower already exists
+                let existingFlower = allFlowers.first { $0.name == flowerData.name }
+                
+                if existingFlower == nil {
+                    // Create new unlockable flower
+                    let newFlower = Flower(
+                        name: flowerData.name,
+                        imageName: flowerData.imageName,
+                        isCurrent: false,
+                        isActive: false,
+                        isOwned: false,  // Not owned yet
+                        health: 100.0,
+                        maxHealth: 100.0,
+                        careLevel: 1.0,
+                        streakCount: 0,
+                        unlockRequirement: flowerData.streakRequirement,
+                        unlockType: "streak"
+                    )
+                    modelContext.insert(newFlower)
+                } else if existingFlower?.unlockRequirement == nil && !existingFlower!.effectiveIsOwned {
+                    // Update existing flower to be unlockable if it's not already owned
+                    existingFlower?.unlockRequirement = flowerData.streakRequirement
+                    existingFlower?.unlockType = "streak"
+                }
+            }
+            
+            try modelContext.save()
+            print("✅ Initialized unlockable flowers")
+        } catch {
+            print("❌ Error initializing unlockable flowers: \(error)")
+        }
+    }
+    
+    // Check and unlock flowers based on current streak
+    private func checkAndUnlockFlowers() {
+        let activeFlowers = allFlowers.filter { $0.effectiveIsActive }
+        guard !activeFlowers.isEmpty else { return }
+        
+        let currentMaxStreak = activeFlowers.map { $0.effectiveStreakCount }.max() ?? 0
+        
+        for flower in allFlowers {
+            if let requirement = flower.unlockRequirement,
+               currentMaxStreak >= requirement,
+               !flower.effectiveIsOwned {
+                do {
+                    flower.isOwned = true
+                    flower.unlockRequirement = nil  // Mark as unlocked
+                    try modelContext.save()
+                    print("✅ Auto-unlocked flower: \(flower.name) (streak: \(currentMaxStreak) >= \(requirement))")
+                } catch {
+                    print("❌ Error auto-unlocking flower: \(error)")
                 }
             }
         }
@@ -1685,6 +2059,28 @@ struct FlowerIndexView: View {
         .cornerRadius(12)
         .padding(.horizontal)
         .padding(.top, 10)  // Remove top padding to eliminate whitespace
+    }
+    
+    // Unlock button
+    private var unlockButton: some View {
+        Button(action: {
+            showUnlockScreen = true
+        }) {
+            HStack {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 16))
+                Text("Unlock New Flowers")
+                    .font(.headline)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14))
+            }
+            .foregroundColor(primaryTextColor)
+            .padding()
+            .background(transparentBoxBackground)
+            .cornerRadius(12)
+        }
+        .padding(.horizontal)
     }
     
     // Pending requests section
@@ -2063,6 +2459,268 @@ struct FlowerIndexView: View {
             print("✅ Declined request for flower")
         } catch {
             print("❌ Error declining request: \(error)")
+        }
+    }
+}
+
+// Unlock Screen (B-008: S-004) - Shows unlockable flowers and requirements
+struct UnlockScreen: View {
+    let selectedTheme: AppTheme
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: [SortDescriptor(\Flower.unlockRequirement, order: .forward)]) private var allFlowers: [Flower]
+    @State private var showUnlockAnimation = false
+    @State private var unlockedFlowerId: UUID? = nil
+    
+    // Get unlockable flowers (those with unlock requirements)
+    private var unlockableFlowers: [Flower] {
+        allFlowers.filter { flower in
+            flower.unlockRequirement != nil && !flower.effectiveIsOwned
+        }
+    }
+    
+    // Get maximum streak across all active flowers
+    private var maxStreak: Int {
+        let activeFlowers = allFlowers.filter { $0.effectiveIsActive }
+        guard !activeFlowers.isEmpty else { return 0 }
+        return activeFlowers.map { $0.effectiveStreakCount }.max() ?? 0
+    }
+    
+    private var primaryTextColor: Color {
+        switch selectedTheme {
+        case .darkMode:
+            return Color.white
+        default:
+            return Color.primary
+        }
+    }
+    
+    private var transparentBoxBackground: some View {
+        ZStack {
+            selectedTheme.backgroundColor
+            if selectedTheme == .darkMode {
+                Color.white.opacity(0.1)
+            } else {
+                Color.white.opacity(0.4)
+            }
+        }
+    }
+    
+    var body: some View {
+        NavigationView {
+            ZStack {
+                // Background with theme color
+                selectedTheme.backgroundColor
+                    .ignoresSafeArea()
+                
+                if unlockableFlowers.isEmpty {
+                    emptyUnlockView
+                } else {
+                    ScrollView {
+                        VStack(spacing: 20) {
+                            // Current streak info
+                            currentStreakInfo
+                            
+                            // Unlockable flowers grid
+                            LazyVGrid(columns: [
+                                GridItem(.flexible(), spacing: 16),
+                                GridItem(.flexible(), spacing: 16)
+                            ], spacing: 16) {
+                                ForEach(unlockableFlowers) { flower in
+                                    unlockableFlowerCard(flower: flower)
+                                }
+                            }
+                            .padding()
+                        }
+                        .padding(.top)
+                    }
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(selectedTheme.backgroundColor, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Unlock Flowers")
+                        .foregroundColor(primaryTextColor)
+                        .font(.headline)
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .foregroundColor(primaryTextColor)
+                }
+            }
+        }
+        .onAppear {
+            checkAndUnlockFlowers()
+        }
+    }
+    
+    // Current streak info banner
+    private var currentStreakInfo: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Current Streak")
+                    .font(.headline)
+                    .foregroundColor(primaryTextColor)
+                Text("\(maxStreak) days")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundColor(.green)
+            }
+            Spacer()
+            Image(systemName: "flame.fill")
+                .font(.system(size: 30))
+                .foregroundColor(.orange)
+        }
+        .padding()
+        .background(transparentBoxBackground)
+        .cornerRadius(12)
+        .padding(.horizontal)
+    }
+    
+    // Empty unlock view
+    private var emptyUnlockView: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 60))
+                .foregroundColor(primaryTextColor.opacity(0.5))
+            Text("All Flowers Unlocked!")
+                .font(.title2)
+                .fontWeight(.semibold)
+                .foregroundColor(primaryTextColor)
+            Text("You've unlocked all available flowers")
+                .font(.subheadline)
+                .foregroundColor(primaryTextColor.opacity(0.7))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+        }
+        .padding()
+    }
+    
+    // Unlockable flower card
+    @ViewBuilder
+    private func unlockableFlowerCard(flower: Flower) -> some View {
+        let requirement = flower.unlockRequirement ?? 0
+        let isUnlocked = maxStreak >= requirement
+        let isUnlocking = unlockedFlowerId == flower.id
+        
+        VStack(spacing: 12) {
+            // Flower image
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .frame(height: 120)
+                    .background(transparentBoxBackground)
+                
+                if isUnlocking && showUnlockAnimation {
+                    // Unlock animation
+                    VStack {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 40))
+                            .foregroundColor(.yellow)
+                            .symbolEffect(.bounce, value: showUnlockAnimation)
+                        Text("Unlocked!")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                    }
+                } else {
+                    Image(flower.imageName)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(height: 100)
+                        .opacity(isUnlocked ? 1.0 : 0.3)
+                        .overlay(
+                            // Lock overlay for locked flowers
+                            Group {
+                                if !isUnlocked {
+                                    ZStack {
+                                        Color.black.opacity(0.5)
+                                        Image(systemName: "lock.fill")
+                                            .font(.system(size: 30))
+                                            .foregroundColor(.white)
+                                    }
+                                }
+                            }
+                        )
+                }
+            }
+            
+            // Flower name
+            Text(flower.name)
+                .font(.headline)
+                .foregroundColor(primaryTextColor)
+            
+            // Unlock requirement
+            HStack(spacing: 4) {
+                if isUnlocked {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                    Text("Unlocked")
+                        .font(.caption)
+                        .foregroundColor(.green)
+                } else {
+                    Image(systemName: "flame.fill")
+                        .foregroundColor(.orange)
+                        .font(.caption)
+                    Text("\(requirement) day streak")
+                        .font(.caption)
+                        .foregroundColor(primaryTextColor.opacity(0.7))
+                }
+            }
+        }
+        .padding()
+        .background(transparentBoxBackground)
+        .cornerRadius(12)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(isUnlocked ? Color.green : Color.clear, lineWidth: 2)
+        )
+        .onTapGesture {
+            if isUnlocked && !flower.effectiveIsOwned {
+                unlockFlower(flower: flower)
+            }
+        }
+    }
+    
+    // Check and unlock flowers based on current streak
+    private func checkAndUnlockFlowers() {
+        let activeFlowers = allFlowers.filter { $0.effectiveIsActive }
+        guard !activeFlowers.isEmpty else { return }
+        
+        let currentMaxStreak = activeFlowers.map { $0.effectiveStreakCount }.max() ?? 0
+        
+        for flower in unlockableFlowers {
+            if let requirement = flower.unlockRequirement,
+               currentMaxStreak >= requirement,
+               !flower.effectiveIsOwned {
+                unlockFlower(flower: flower, animated: true)
+            }
+        }
+    }
+    
+    // Unlock a flower
+    private func unlockFlower(flower: Flower, animated: Bool = false) {
+        do {
+            flower.isOwned = true
+            flower.unlockRequirement = nil  // Mark as unlocked
+            try modelContext.save()
+            
+            if animated {
+                unlockedFlowerId = flower.id
+                showUnlockAnimation = true
+                
+                // Hide animation after delay
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    showUnlockAnimation = false
+                    unlockedFlowerId = nil
+                }
+            }
+            
+            print("✅ Unlocked flower: \(flower.name)")
+        } catch {
+            print("❌ Error unlocking flower: \(error)")
         }
     }
 }

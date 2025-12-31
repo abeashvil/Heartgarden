@@ -223,8 +223,6 @@ struct HistoryView: View {
     @ViewBuilder
     private func historyEntryCard(entry: QuestionHistory) -> some View {
         let flower = allFlowers.first { $0.id == entry.flowerId }
-        let user1Care = allCareEntries.first { $0.id == entry.user1CareId }
-        let user2Care = allCareEntries.first { $0.id == entry.user2CareId }
         let hasUnread = hasUnreadMessages(entry: entry)
         
         ZStack(alignment: .topTrailing) {
@@ -247,33 +245,19 @@ struct HistoryView: View {
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     
-                    // Flower name and date
+                    Spacer()
+                    
+                    // Flower name and date (moved to bottom)
                     HStack {
                         if let flower = flower {
                             Text(flower.name)
                                 .font(.caption)
-                                .foregroundColor(primaryTextColor.opacity(0.7))
+                                .foregroundColor(primaryTextColor.opacity(0.6))
                         }
                         Spacer()
                         Text(entry.dateCompleted, style: .date)
                             .font(.caption)
-                            .foregroundColor(primaryTextColor.opacity(0.7))
-                    }
-                    
-                    // Preview of answers
-                    HStack(spacing: 8) {
-                        if let user1Care = user1Care {
-                            Text("👤 \(user1Care.answerText.prefix(30))...")
-                                .font(.caption)
-                                .foregroundColor(primaryTextColor.opacity(0.6))
-                                .lineLimit(1)
-                        }
-                        if let user2Care = user2Care {
-                            Text("👥 \(user2Care.answerText.prefix(30))...")
-                                .font(.caption)
-                                .foregroundColor(primaryTextColor.opacity(0.6))
-                                .lineLimit(1)
-                        }
+                            .foregroundColor(primaryTextColor.opacity(0.6))
                     }
                 }
                 .padding()

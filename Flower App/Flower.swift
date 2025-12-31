@@ -30,6 +30,10 @@ final class Flower {
     var streakCount: Int?  // Number of consecutive days both users completed care
     var lastStreakDate: Date?  // Last date that contributed to the streak
     
+    // Unlock system (B-008: F-006)
+    var unlockRequirement: Int?  // Streak requirement to unlock this flower (nil = already owned/unlocked)
+    var unlockType: String?  // "streak" or "purchase" - how this flower can be unlocked
+    
     // Computed properties with defaults for backward compatibility
     var effectiveHealth: Double {
         return health ?? 100.0
@@ -64,7 +68,9 @@ final class Flower {
         careLevel: Double? = 1.0,
         lastCareDate: Date? = nil,
         streakCount: Int? = 0,
-        lastStreakDate: Date? = nil
+        lastStreakDate: Date? = nil,
+        unlockRequirement: Int? = nil,
+        unlockType: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -79,6 +85,8 @@ final class Flower {
         self.lastCareDate = lastCareDate
         self.streakCount = streakCount
         self.lastStreakDate = lastStreakDate
+        self.unlockRequirement = unlockRequirement
+        self.unlockType = unlockType
     }
     
     // Computed property with default for backward compatibility

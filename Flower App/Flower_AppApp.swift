@@ -19,6 +19,8 @@ struct Flower_AppApp: App {
             QuestionHistory.self,  // History of completed questions
             UserSettings.self,  // User settings including active flower slots
             FlowerActivationRequest.self,  // Activation/deactivation requests between partners
+            CoupleLevel.self,  // Couple leveling system
+            Achievement.self,  // Achievement tracking
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
