@@ -38,7 +38,7 @@ enum TabSelection {
     case main
     case history
     case index
-    case achievements
+    case profile
 }
 
 // Preference key for button frame tracking
@@ -64,12 +64,15 @@ struct ContentView: View {
     @State private var pulseScale: CGFloat = 1.0  // For pulsing question indicator
     @State private var showStreakDebug = false
     @State private var currentActiveFlowerIndex: Int = 0  // Index of current active flower in swipe view
+    @State private var showProfileEdit = false
+    @State private var showSettings = false
     @Query(sort: [SortDescriptor(\QuestionHistory.dateCompleted, order: .reverse)]) private var allHistoryEntries: [QuestionHistory]
     @Query private var allCareEntries: [DailyCare]
     @Query private var allChatMessages: [ChatMessage]
     @Query(sort: [SortDescriptor(\Flower.createdAt, order: .reverse)]) private var allFlowers: [Flower]
     @Query private var coupleLevels: [CoupleLevel]
     @Query(sort: [SortDescriptor(\Achievement.category, order: .forward), SortDescriptor(\Achievement.requirement, order: .forward)]) private var allAchievements: [Achievement]
+    @Query private var userSettings: [UserSettings]
     
     // Display enhancement states - scoped to flower view only
     @State private var flowerParticleOpacity: Double = 0.3
@@ -115,9 +118,18 @@ struct ContentView: View {
                             }
                         )
                 }
-                // DEBUG: User switching button for testing
+                // Settings button
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 12) {
+                        // Settings button
+                        Button(action: {
+                            showSettings = true
+                        }) {
+                            Image(systemName: "gearshape.fill")
+                                .font(.system(size: 22))
+                                .foregroundColor(primaryTextColor)
+                        }
+                        // DEBUG: User switching button for testing
                         Button(action: {
                             // Switch between user1 and user2
                             currentUserId = currentUserId == "user1" ? "user2" : "user1"
@@ -195,6 +207,10 @@ struct ContentView: View {
                 StreakDebugView(selectedTheme: selectedTheme, currentUserId: currentUserId)
                     .environment(\.modelContext, modelContext)
             }
+            .sheet(isPresented: $showSettings) {
+                SettingsView(selectedTheme: selectedTheme)
+                    .environment(\.modelContext, modelContext)
+            }
             .overlay(
                 // Bottom tab bar
                 VStack {
@@ -243,6 +259,9 @@ struct ContentView: View {
                     viewModel.calculateStreak(flower: flower)
                 }
             }
+            
+            // Load and schedule reminders on app launch (B-009)
+            loadAndScheduleReminders()
         }
         .onChange(of: currentUserId) { oldValue, newValue in
             // Update partner status when user switches
@@ -317,31 +336,23 @@ struct ContentView: View {
     
     // Pulsing question indicator
     @ViewBuilder
-    private var partnerQuestionIndicator: some View {
-        VStack {
-            HStack {
-                Spacer()
-                ZStack {
-                    // Pulsing background circle
-                    Circle()
-                        .fill(Color.blue.opacity(0.2))
-                        .frame(width: 40, height: 40)
-                        .scaleEffect(pulseScale)
-                        .animation(
-                            Animation.easeInOut(duration: 1.0)
-                                .repeatForever(autoreverses: true),
-                            value: pulseScale
-                        )
-                    
-                    // Question mark icon
-                    Image(systemName: "questionmark.circle.fill")
-                        .font(.system(size: 24))
-                        .foregroundColor(.blue)
-                }
-                .padding(.top, -10)
-                .padding(.trailing, -10)
-            }
-            Spacer()
+    private func partnerQuestionIndicator() -> some View {
+        ZStack {
+            // Pulsing background circle
+            Circle()
+                .fill(Color.orange.opacity(0.2))
+                .frame(width: 32, height: 32)
+                .scaleEffect(pulseScale)
+                .animation(
+                    Animation.easeInOut(duration: 1.0)
+                        .repeatForever(autoreverses: true),
+                    value: pulseScale
+                )
+            
+            // Exclamation point icon
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 20))
+                .foregroundColor(.orange)
         }
         .onAppear {
             pulseScale = 1.2
@@ -408,10 +419,6 @@ struct ContentView: View {
                     value: flowerParallaxOffset
                 )
             
-            // Pulsing question indicator if partner has unanswered questions
-            if hasUnansweredPartnerQuestion(flower: flower) {
-                partnerQuestionIndicator
-            }
         }
         .onTapGesture {
             showFlowerCare = true
@@ -640,8 +647,8 @@ struct ContentView: View {
         } else if selectedTab == .index {
             FlowerIndexView(selectedTheme: selectedTheme, currentUserId: currentUserId)
                 .padding(.bottom, 80)
-        } else if selectedTab == .achievements {
-            AchievementsView(selectedTheme: selectedTheme, currentUserId: currentUserId)
+        } else if selectedTab == .profile {
+            ProfileEditView(selectedTheme: selectedTheme, currentUserId: currentUserId, showSettings: .constant(false))
                 .padding(.bottom, 80)
         }
     }
@@ -1016,11 +1023,22 @@ struct ContentView: View {
                     VStack(spacing: 10) {
                         flowerDisplayView(flower: flower)
                         
-                        // Flower Name
-                        Text(flower.name)
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                            .foregroundColor(primaryTextColor)
+                        // Flower Name with question indicator
+                        HStack {
+                            Spacer()
+                            Text(flower.name)
+                                .font(.title2)
+                                .fontWeight(.semibold)
+                                .foregroundColor(primaryTextColor)
+                                .overlay(alignment: .trailing) {
+                                    if hasUnansweredPartnerQuestion(flower: flower) {
+                                        partnerQuestionIndicator()
+                                            .offset(x: 32)
+                                    }
+                                }
+                            Spacer()
+                        }
+                        .frame(height: 32) // Fixed height to prevent layout shifts
                         
                         // Health Bar
                         healthBarView(flower: flower)
@@ -1192,17 +1210,34 @@ struct ContentView: View {
                 .padding(.vertical, 16)
             }
             
-            // Achievements page tab (trophy icon)
+            // Profile page tab (person icon)
             Button(action: {
                 withAnimation {
-                    selectedTab = .achievements
+                    selectedTab = .profile
                 }
             }) {
-                Image(systemName: "trophy.fill")
-                    .font(.system(size: 24))
-                    .foregroundColor(selectedTab == .achievements ? primaryTextColor : primaryTextColor.opacity(0.5))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
+                // Show profile picture if available, otherwise default icon
+                if let settings = userSettings.first,
+                   let pictureData = settings.profilePicture(for: currentUserId),
+                   let uiImage = UIImage(data: pictureData) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 28, height: 28)
+                        .clipShape(Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(selectedTab == .profile ? primaryTextColor : primaryTextColor.opacity(0.5), lineWidth: selectedTab == .profile ? 2 : 1)
+                        )
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                } else {
+                    Image(systemName: "person.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundColor(selectedTab == .profile ? primaryTextColor : primaryTextColor.opacity(0.5))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                }
             }
         }
         .background(
@@ -1215,6 +1250,22 @@ struct ContentView: View {
             .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: -2)
         )
         .ignoresSafeArea(edges: .bottom)
+    }
+    
+    // Load and schedule reminders (B-009)
+    private func loadAndScheduleReminders() {
+        guard let settings = userSettings.first else { return }
+        
+        if settings.effectiveReminderEnabled {
+            // Use default time (8 PM) - will be replaced with scenario-based scheduling
+            NotificationManager.shared.scheduleDailyReminder(
+                at: 20,
+                minute: 0,
+                isEnabled: true
+            )
+        } else {
+            NotificationManager.shared.cancelAllReminders()
+        }
     }
 }
 
