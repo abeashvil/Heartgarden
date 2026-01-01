@@ -34,6 +34,10 @@ struct Flower_AppApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .onAppear {
+                    // Request notification permission on app launch (B-009)
+                    NotificationManager.shared.requestAuthorization()
+                }
         }
         .modelContainer(sharedModelContainer)
     }
