@@ -17,10 +17,11 @@ enum QuestionType {
     case photo
 }
 
-// Question with type
+// Question with type and genre
 struct Question {
     let text: String
     let type: QuestionType
+    let genre: QuestionGenre
 }
 
 // Flower Care Screen (S-002) - F-002: Daily Question, F-003: Photo Sending
@@ -340,43 +341,14 @@ struct FlowerCareView: View {
         currentQuestion.type == .photo
     }
     
-    // Questions with types (F-002 requirement)
-    private let dailyQuestions: [Question] = [
-        Question(text: "What made you smile today?", type: .text),
-        Question(text: "What are you grateful for today?", type: .text),
-        Question(text: "What's one thing you love about your partner?", type: .text),
-        Question(text: "What's a memory that makes you happy?", type: .text),
-        Question(text: "What are you looking forward to?", type: .text),
-        Question(text: "What made today special?", type: .text),
-        Question(text: "What's something you appreciate about your relationship?", type: .text),
-        Question(text: "What's a small moment of joy you had today?", type: .text),
-        Question(text: "What's something you're proud of?", type: .text),
-        Question(text: "What's a goal you're working towards together?", type: .text),
-        Question(text: "What's something that made you laugh today?", type: .text),
-        Question(text: "What's a tradition you want to start?", type: .text),
-        Question(text: "What's your favorite thing to do together?", type: .text),
-        Question(text: "What's something new you learned about your partner?", type: .text),
-        Question(text: "What's a dream you share?", type: .text),
-        Question(text: "What's something that brings you closer?", type: .text),
-        Question(text: "What's a challenge you've overcome together?", type: .text),
-        Question(text: "What's something you want to try together?", type: .text),
-        Question(text: "What's a place you want to visit together?", type: .text),
-        Question(text: "What's something that makes your relationship unique?", type: .text),
-        Question(text: "What's a habit you want to build together?", type: .text),
-        Question(text: "What's something that surprised you today?", type: .text),
-        Question(text: "What's a quality you admire in your partner?", type: .text),
-        Question(text: "What's a moment you want to remember?", type: .text),
-        Question(text: "What's something that made you feel loved today?", type: .text),
-        Question(text: "What's a way you want to grow together?", type: .text),
-        Question(text: "What's something that inspires you?", type: .text),
-        Question(text: "What's a skill you want to learn together?", type: .text),
-        // Photo questions
-        Question(text: "Share a photo of something that made you happy today", type: .photo),
-        Question(text: "Capture a moment you want to remember together", type: .photo),
-        Question(text: "Take a photo of something that represents your relationship", type: .photo),
-        Question(text: "Share a picture of something you're grateful for", type: .photo),
-        Question(text: "Capture something beautiful you saw today", type: .photo),
-    ]
+    // Get questions filtered by flower's genre
+    private var dailyQuestions: [Question] {
+        let allQuestions = QuestionBank.getAllQuestions()
+        let flowerGenreString = flower.effectiveQuestionGenre
+        let flowerGenre = QuestionGenre(rawValue: flowerGenreString) ?? .relationship
+        
+        return allQuestions[flowerGenre] ?? []
+    }
     
     private var primaryTextColor: Color {
         switch selectedTheme {

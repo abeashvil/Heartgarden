@@ -34,6 +34,9 @@ final class Flower {
     var unlockRequirement: Int?  // Streak requirement to unlock this flower (nil = already owned/unlocked)
     var unlockType: String?  // "streak" or "purchase" - how this flower can be unlocked
     
+    // Question genre
+    var questionGenre: String?  // Genre of questions for this flower (e.g., "romantic", "spicy", "informational")
+    
     // Computed properties with defaults for backward compatibility
     var effectiveHealth: Double {
         return health ?? 100.0
@@ -70,7 +73,8 @@ final class Flower {
         streakCount: Int? = 0,
         lastStreakDate: Date? = nil,
         unlockRequirement: Int? = nil,
-        unlockType: String? = nil
+        unlockType: String? = nil,
+        questionGenre: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -87,6 +91,12 @@ final class Flower {
         self.lastStreakDate = lastStreakDate
         self.unlockRequirement = unlockRequirement
         self.unlockType = unlockType
+        self.questionGenre = questionGenre
+    }
+    
+    // Computed property to get question genre with default
+    var effectiveQuestionGenre: String {
+        return questionGenre ?? QuestionGenre.relationship.rawValue
     }
     
     // Computed property with default for backward compatibility

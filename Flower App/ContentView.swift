@@ -1851,6 +1851,8 @@ struct FlowerIndexView: View {
     @Query(sort: [SortDescriptor(\FlowerActivationRequest.createdAt, order: .reverse)]) private var allRequests: [FlowerActivationRequest]
     @State private var fadingOutFlowerId: UUID? = nil
     @State private var showUnlockScreen = false  // Track which flower is fading out
+    @State private var selectedFlowerForGenre: Flower? = nil
+    @State private var showGenreInfo = false
     
     // Filter to show only owned flowers, sorted with active flowers first
     private var ownedFlowers: [Flower] {
@@ -1984,6 +1986,15 @@ struct FlowerIndexView: View {
             UnlockScreen(selectedTheme: selectedTheme)
                 .environment(\.modelContext, modelContext)
         }
+        .overlay(
+            Group {
+                if showGenreInfo, let flower = selectedFlowerForGenre {
+                    FlowerGenreInfoView(flower: flower, selectedTheme: selectedTheme) {
+                        showGenreInfo = false
+                    }
+                }
+            }
+        )
         .onAppear {
             initializeUnlockableFlowers()
             checkAndUnlockFlowers()
@@ -2208,84 +2219,98 @@ struct FlowerIndexView: View {
     // Flower card in index - clickable to toggle activation
     @ViewBuilder
     private func flowerIndexCard(flower: Flower) -> some View {
-        Button(action: {
-            toggleFlowerActivation(flower: flower)
-        }) {
-            VStack(spacing: 12) {
-                // Flower image - fixed size
-                Image(flower.imageName)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 100, height: 100)
-                    .padding(.top, 8)
-                
-                // Flower name
-                Text(flower.name)
-                    .font(.headline)
-                    .foregroundColor(primaryTextColor)
-                    .lineLimit(1)
-                
-                // Health indicator (if active) or waiting indicator (if request sent)
-                if flower.effectiveIsActive {
-                    HStack(spacing: 4) {
-                        Image(systemName: "heart.fill")
-                            .font(.caption2)
-                            .foregroundColor(healthColor(percentage: flower.healthPercentage))
-                        Text("\(Int(flower.effectiveHealth))/\(Int(flower.effectiveMaxHealth))")
-                            .font(.caption2)
-                            .foregroundColor(primaryTextColor.opacity(0.8))
-                    }
-                } else if hasPendingRequest(for: flower) {
-                    // Show "Waiting for approval" indicator
-                    HStack(spacing: 4) {
-                        Image(systemName: "clock.fill")
-                            .font(.caption2)
-                            .foregroundColor(.orange)
-                        Text("Waiting for approval")
-                            .font(.caption2)
-                            .foregroundColor(.orange)
-                    }
-                } else {
-                    // Spacer to maintain consistent height
-                    HStack(spacing: 4) {
-                        Image(systemName: "heart.fill")
-                            .font(.caption2)
-                            .foregroundColor(.clear)
-                        Text("")
-                            .font(.caption2)
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding()
-            .background(transparentBoxBackground)
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(strokeColor(for: flower), lineWidth: 2)
-            )
-            .overlay(
-                // Pending indicator
-                Group {
-                    if hasPendingRequest(for: flower) {
-                        VStack {
-                            HStack {
-                                Spacer()
-                                Image(systemName: "clock.fill")
-                                    .font(.caption)
-                                    .foregroundColor(.orange)
-                                    .padding(6)
-                                    .background(Color.orange.opacity(0.2))
-                                    .clipShape(Circle())
-                                    .padding(4)
-                            }
-                            Spacer()
+        ZStack {
+            Button(action: {
+                toggleFlowerActivation(flower: flower)
+            }) {
+                VStack(spacing: 12) {
+                    // Flower image - fixed size
+                    Image(flower.imageName)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 100, height: 100)
+                        .padding(.top, 8)
+                    
+                    // Flower name
+                    Text(flower.name)
+                        .font(.headline)
+                        .foregroundColor(primaryTextColor)
+                        .lineLimit(1)
+                    
+                    // Health indicator (if active) or waiting indicator (if request sent)
+                    if flower.effectiveIsActive {
+                        HStack(spacing: 4) {
+                            Image(systemName: "heart.fill")
+                                .font(.caption2)
+                                .foregroundColor(healthColor(percentage: flower.healthPercentage))
+                            Text("\(Int(flower.effectiveHealth))/\(Int(flower.effectiveMaxHealth))")
+                                .font(.caption2)
+                                .foregroundColor(primaryTextColor.opacity(0.8))
+                        }
+                    } else if hasPendingRequest(for: flower) {
+                        // Show "Waiting for approval" indicator
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock.fill")
+                                .font(.caption2)
+                                .foregroundColor(.orange)
+                            Text("Waiting for approval")
+                                .font(.caption2)
+                                .foregroundColor(.orange)
+                        }
+                    } else {
+                        // Spacer to maintain consistent height
+                        HStack(spacing: 4) {
+                            Image(systemName: "heart.fill")
+                                .font(.caption2)
+                                .foregroundColor(.clear)
+                            Text("")
+                                .font(.caption2)
                         }
                     }
                 }
-            )
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(transparentBoxBackground)
+                .cornerRadius(12)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(strokeColor(for: flower), lineWidth: 2)
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+            
+            // Top-right indicators (genre info and pending request)
+            VStack {
+                HStack {
+                    Spacer()
+                    // Genre info icon
+                    Button(action: {
+                        selectedFlowerForGenre = flower
+                        showGenreInfo = true
+                    }) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 18))
+                            .foregroundColor(primaryTextColor.opacity(0.6))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .padding(8)
+                }
+                if hasPendingRequest(for: flower) {
+                    HStack {
+                        Spacer()
+                        Image(systemName: "clock.fill")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                            .padding(6)
+                            .background(Color.orange.opacity(0.2))
+                            .clipShape(Circle())
+                            .padding(.top, 4)
+                            .padding(.trailing, 4)
+                    }
+                }
+                Spacer()
+            }
         }
-        .buttonStyle(PlainButtonStyle())
     }
     
     // Health color based on percentage

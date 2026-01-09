@@ -7,9 +7,18 @@
 
 import SwiftUI
 import SwiftData
+// Uncomment after Firebase setup:
+// import FirebaseCore
 
 @main
 struct Flower_AppApp: App {
+    @StateObject private var authManager = AuthenticationManager.shared
+    
+    // Uncomment after Firebase setup:
+    // init() {
+    //     FirebaseApp.configure()
+    // }
+    
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             Item.self,
@@ -33,11 +42,21 @@ struct Flower_AppApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .onAppear {
-                    // Request notification permission on app launch (B-009)
-                    NotificationManager.shared.requestAuthorization()
+            Group {
+                if authManager.isAuthenticated {
+                    ContentView()
+                        .onAppear {
+                            // Request notification permission on app launch (B-009)
+                            NotificationManager.shared.requestAuthorization()
+                        }
+                } else {
+                    SignUpView {
+                        // On sign in complete, the view will automatically switch to ContentView
+                        // The @Published property will trigger a view update
+                    }
                 }
+            }
+            .environmentObject(authManager)
         }
         .modelContainer(sharedModelContainer)
     }

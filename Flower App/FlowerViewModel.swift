@@ -141,7 +141,8 @@ class FlowerViewModel: ObservableObject {
                         health: 100.0,
                         maxHealth: 100.0,
                         careLevel: 1.0,
-                        streakCount: 0
+                        streakCount: 0,
+                        questionGenre: QuestionGenre.relationship.rawValue
                     )
                     // Ensure health properties are set
                     if defaultFlower.health == nil {
@@ -185,7 +186,8 @@ class FlowerViewModel: ObservableObject {
                     isOwned: true,
                     health: 100.0,
                     maxHealth: 100.0,
-                    careLevel: 1.0
+                    careLevel: 1.0,
+                    questionGenre: QuestionGenre.relationship.rawValue
                 )
                 self.currentFlower = fallbackFlower
             }
@@ -375,17 +377,17 @@ class FlowerViewModel: ObservableObject {
     // Initialize default flowers (10 common flower types)
     @MainActor
     func initializeDefaultFlowers(context: ModelContext) {
-        let commonFlowerNames = [
-            "Rose",
-            "Tulip",
-            "Daisy",
-            "Sunflower",
-            "Lily",
-            "Orchid",
-            "Peony",
-            "Lavender",
-            "Marigold",
-            "Carnation"
+        let flowerGenres: [String: String] = [
+            "Rose": QuestionGenre.romantic.rawValue,
+            "Tulip": QuestionGenre.informational.rawValue,
+            "Daisy": QuestionGenre.fun.rawValue,
+            "Sunflower": QuestionGenre.relationship.rawValue,
+            "Lily": QuestionGenre.deep.rawValue,
+            "Orchid": QuestionGenre.spicy.rawValue,
+            "Peony": QuestionGenre.romantic.rawValue,
+            "Lavender": QuestionGenre.deep.rawValue,
+            "Marigold": QuestionGenre.fun.rawValue,
+            "Carnation": QuestionGenre.relationship.rawValue
         ]
         
         // Check if flowers already exist
@@ -393,7 +395,7 @@ class FlowerViewModel: ObservableObject {
         guard let existingFlowers = try? context.fetch(allFlowersDescriptor) else { return }
         
         // Create flowers that don't exist yet
-        for flowerName in commonFlowerNames {
+        for (flowerName, genre) in flowerGenres {
             let flowerExists = existingFlowers.contains { $0.name == flowerName }
             if !flowerExists {
                 let newFlower = Flower(
@@ -405,10 +407,23 @@ class FlowerViewModel: ObservableObject {
                     health: 100.0,
                     maxHealth: 100.0,
                     careLevel: 1.0,
-                    streakCount: 0
+                    streakCount: 0,
+                    questionGenre: genre
                 )
                 context.insert(newFlower)
+            } else {
+                // Migrate existing flowers to have a genre if they don't have one
+                if let existingFlower = existingFlowers.first(where: { $0.name == flowerName }),
+                   existingFlower.questionGenre == nil {
+                    existingFlower.questionGenre = genre
+                }
             }
+        }
+        
+        // Migrate "Daily Flower" to have a genre if it doesn't have one
+        if let dailyFlower = existingFlowers.first(where: { $0.name == "Daily Flower" }),
+           dailyFlower.questionGenre == nil {
+            dailyFlower.questionGenre = QuestionGenre.relationship.rawValue
         }
         
         // Save the new flowers
